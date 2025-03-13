@@ -30,19 +30,30 @@ def refusal_score(
     nonrefusal_probs = torch.ones_like(refusal_probs) - refusal_probs
     return torch.log(refusal_probs + epsilon) - torch.log(nonrefusal_probs + epsilon)
 
-def get_refusal_scores(model, instructions, tokenize_instructions_fn, refusal_toks, fwd_pre_hooks=[], fwd_hooks=[], batch_size=32):
+def get_refusal_scores(
+    model, instructions, tokenize_instructions_fn, refusal_toks, 
+    fwd_pre_hooks=[], fwd_hooks=[], batch_size=32
+):
     refusal_score_fn = functools.partial(refusal_score, refusal_toks=refusal_toks)
-
     refusal_scores = torch.zeros(len(instructions), device=model.device)
 
+    # Check if model is a PrismaticVLM
+    is_prismatic = hasattr(model, "vision_backbone") and hasattr(model, "llm_backbone")
+
     for i in range(0, len(instructions), batch_size):
-        tokenized_instructions = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
+        tokenized_instructions = tokenize_instructions_fn(instructions[i:i+batch_size])
+
+        # Add image dimension if model is PrismaticVLM, else set it to None
+        inputs = {
+            "input_ids": tokenized_instructions.input_ids.to(model.device),
+            "attention_mask": tokenized_instructions.attention_mask.to(model.device),
+        }
+
+        if is_prismatic:
+            inputs["pixel_values"] = None  # Ensure image is explicitly set to None
 
         with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
-            logits = model(
-                input_ids=tokenized_instructions.input_ids.to(model.device),
-                attention_mask=tokenized_instructions.attention_mask.to(model.device),
-            ).logits
+            logits = model(**inputs).logits
 
         refusal_scores[i:i+batch_size] = refusal_score_fn(logits=logits)
 

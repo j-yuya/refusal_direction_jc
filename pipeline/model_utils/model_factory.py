@@ -17,5 +17,11 @@ def construct_model_base(model_path: str) -> ModelBase:
     elif 'yi' in model_path.lower():
         from pipeline.model_utils.yi_model import YiModel
         return YiModel(model_path)
+    elif 'vicuna' in model_path.lower():
+        from pipeline.model_utils.vicuna_model import VicunaModel
+        return VicunaModel(model_path)
+    elif 'llava' in model_path.lower():
+        from pipeline.model_utils.llava_model import LlavaModel
+        return LlavaModel(model_path)
     else:
         raise ValueError(f"Unknown model family: {model_path}")

@@ -187,4 +187,6 @@ def run_pipeline(model_path):
 
 if __name__ == "__main__":
     args = parse_arguments()
+    if args.model_path is None:
+        run_pipeline(model_path="/ceph/jcaspary/hf_cache/hub/models--TRI-ML--prismatic-vlms/snapshots/a3ba8a19c453a82eaf5a3fb1e699dd9e441f0a12/reproduction-llava-v15+7b")
     run_pipeline(model_path=args.model_path)
