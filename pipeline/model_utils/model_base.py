@@ -25,6 +25,10 @@ class ModelBase(ABC):
             del self.model
 
     @abstractmethod
+    def get_instruction_with_sys_prompt(instruction: str) -> str:
+        pass
+
+    @abstractmethod
     def _load_model(self, model_name_or_path: str) -> AutoModelForCausalLM:
         pass
 
@@ -98,7 +102,8 @@ class ModelBase(ABC):
                         #     texts=[batched_instructions[j]],
                         #     generation_config=generation_config
                         # )
-                        response= self.model.generate(image=batched_pixel_values[j], prompt_text=batched_instructions[j], generation_config=generation_config, min_length=1)
+                        prompt_text = self.get_instruction_with_sys_prompt(batched_instructions[j])
+                        response= self.model.generate(image=batched_pixel_values[j], prompt_text=prompt_text, generation_config=generation_config)
                         responses.append(response)
                         # pdb.set_trace()
                     for j in range(0, len(batched_pixel_values)):

@@ -12,7 +12,7 @@ hf_token = Path("/work/jcaspary/.hf_token").read_text().strip()
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
-test_prismatic = True
+test_prismatic = False
 
 harmful_test = random.sample(load_dataset_split(harmtype='harmful', split='test', is_vlm=True), 100)
 harmless_test = random.sample(load_dataset_split(harmtype='harmless', split='test', is_vlm=True), 100)
@@ -64,7 +64,9 @@ for dataset in datasets:
                 #print(f"Prompt: {batched_instructions[j]}")
                 #print(f"Pixel Values Shape: {batched_pixel_values[j].shape}")
             else:
-                response= model_base.model.generate(image=batched_pixel_values[j], prompt_text=batched_instructions[j], generation_config=generation_config)
+                prompt_text = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {} ASSISTANT:".format(batched_instructions[j])
+                response= model_base.model.generate(image=batched_pixel_values[j], prompt_text=prompt_text, generation_config=generation_config)
+                #response= model_base.model.generate(image=batched_pixel_values[j], prompt_text=batched_instructions[j])
             responses.append(response)
         for j in range(0, len(batched_pixel_values)):
             completions.append({

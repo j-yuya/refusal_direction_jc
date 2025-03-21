@@ -13,7 +13,7 @@ from prismatic import load
 from pathlib import Path
 
 # Vicuna prompt format (Alpaca-style)
-LLAVA_CHAT_TEMPLATE = "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions. USER: {instruction} ASSISTANT: "
+LLAVA_CHAT_TEMPLATE = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {instruction} ASSISTANT:"
 LLAVA_REFUSAL_TOKS  = [306]  # Example: 'I' (check if needed)
 
 def format_instruction_llava(
@@ -102,6 +102,9 @@ class LlavaModel(ModelBase):
     #     self.model_block_modules = self._get_model_block_modules()
     #     self.model_attn_modules = self._get_attn_modules()
     #     self.model_mlp_modules = self._get_mlp_modules()
+
+    def get_instruction_with_sys_prompt(instruction: str):
+        return "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {} ASSISTANT:".format(instruction)
 
     def _load_model(self, model_path, dtype=torch.float16):
         """

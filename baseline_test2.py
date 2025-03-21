@@ -16,7 +16,7 @@ test_prismatic = False
 
 harmful_test = random.sample(load_dataset_split(harmtype='harmful', split='test', is_vlm=True), 100)
 harmless_test = random.sample(load_dataset_split(harmtype='harmless', split='test', is_vlm=True), 100)
-datasets = [harmless_test, harmful_test]
+datasets = [harmful_test, harmless_test]
 batch_size = 32
 
 completions = []
@@ -28,7 +28,7 @@ if not test_prismatic:
     generation_config.pad_token_id = model_base.tokenizer.pad_token_id
 else:
     model_id = "reproduction-llava-v15+13b"
-    # model_id = "mistral-instruct-v0.1+7b"
+    #model_id = "mistral-instruct-v0.1+7b"
     vlm = load(model_id, hf_token=hf_token)
     vlm.to(device, dtype=torch.bfloat16)
 
@@ -60,6 +60,7 @@ for dataset in datasets:
                 prompt_builder = vlm.get_prompt_builder()
                 prompt_builder.add_turn(role="human", message=batched_instructions[j])
                 prompt_text = prompt_builder.get_prompt()
+                print(prompt_text)
                 response = vlm.generate(image=batched_pixel_values[j], prompt_text=prompt_text, do_sample=False, max_new_tokens=64)
                 #print(f"Prompt: {batched_instructions[j]}")
                 #print(f"Pixel Values Shape: {batched_pixel_values[j].shape}")
@@ -83,13 +84,15 @@ for dataset in datasets:
                 }
 
                 # Forward Pass 1
+                input_ids1= tokenized_instructions.input_ids
+                attention_mask1 = tokenized_instructions.attention_mask
                 response1 = model(**inputs1)
-
+                token1 = torch.argmax(response1.logits[0,-1,:]).item()
+                token_str1 = model.llm_backbone.tokenizer.decode(token1).strip()
                 # === Second Forward Pass ===
                 # Build Prompt
-                prompt_builder = vlm.get_prompt_builder()
-                prompt_builder.add_turn(role="human", message=batched_instructions[j])
-                prompt_text = prompt_builder.get_prompt()
+                
+                prompt_text = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {} ASSISTANT:".format(batched_instructions[j])
 
                 # Tokenization using `model.llm_backbone.tokenizer`
                 tokenized_instruction2 = model.llm_backbone.tokenizer(prompt_text, return_tensors="pt")
@@ -100,14 +103,20 @@ for dataset in datasets:
                     "attention_mask": tokenized_instruction2["attention_mask"].to(model.device),
                     "pixel_values": pixel_values.to(model.device),  # Ensure pixel values are included
                 }
+                input_ids2= tokenized_instruction2.input_ids
+                attention_mask2 = tokenized_instruction2.attention_mask
 
                 # Forward Pass 2
                 response2 = model(**inputs2)
+                token2 = torch.argmax(response2.logits[0,-1,:]).item()
+                token_str2 = model.llm_backbone.tokenizer.decode(token2).strip()
+
+                response= model_base.model.generate(image=batched_pixel_values[j], prompt_text=batched_instructions[j], generation_config=generation_config)
                 pdb.set_trace()
 
 
 
-            responses.append(response)
+            responses.append(response1)
         for j in range(0, len(batched_pixel_values)):
             completions.append({
                 'category': categories[i + j],

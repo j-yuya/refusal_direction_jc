@@ -30,8 +30,7 @@ def refusal_score(
     refusal_probs = probs[:, refusal_toks].sum(dim=-1)
 
     nonrefusal_probs = torch.ones_like(refusal_probs) - refusal_probs
-    import pdb
-    pdb.set_trace()
+
     return torch.log(refusal_probs + epsilon) - torch.log(nonrefusal_probs + epsilon)
 
 
@@ -68,11 +67,6 @@ def get_refusal_scores(
             #with torch.autocast("cuda", dtype=pixel_dtype, enabled=True):  # Use model's dtype only for pixel_values
             with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
                 logits = model(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"], pixel_values=inputs["pixel_values"]).logits
-                last_token_logits = logits[:, -1, :]
-                pred_token_ids = torch.argmax(last_token_logits, dim=-1)
-                decoded_token = model.llm_backbone.tokenizer.decode(pred_token_ids[0])
-                import pdb
-                pdb.set_trace()
         else:
             with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
                 logits = model(**inputs).logits  # Standard forward pass (no autocast)
@@ -172,7 +166,7 @@ def select_direction(
     artifact_dir,
     is_vlm,
     kl_threshold=2, # directions larger KL score are filtered out
-    induce_refusal_threshold=-2, # directions with a lower inducing refusal score are filtered out
+    induce_refusal_threshold=-6, # directions with a lower inducing refusal score are filtered out
     prune_layer_percentage=0.2, # discard the directions extracted from the last 20% of the model
     batch_size=1
 ):
