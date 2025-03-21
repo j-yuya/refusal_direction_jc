@@ -13,7 +13,7 @@ from prismatic import load
 from pathlib import Path
 
 # Vicuna prompt format (Alpaca-style)
-LLAVA_CHAT_TEMPLATE = "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions. USER: {instruction} ASSISTANT:"
+LLAVA_CHAT_TEMPLATE = "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions. USER: {instruction} ASSISTANT: "
 LLAVA_REFUSAL_TOKS  = [306]  # Example: 'I' (check if needed)
 
 def format_instruction_llava(
@@ -87,7 +87,7 @@ def act_add_llava_weights(basemodel, direction: Float[Tensor, "d_model"], coeff,
     basemodel.model.llm_backbone.llm.model.layers[layer - 1].mlp.down_proj.bias = torch.nn.Parameter(bias)
 
     # Modify Vision-Language Projector bias (optional)
-    bademodel.model.projector.bias = torch.nn.Parameter(bias)
+    basemodel.model.projector.bias = torch.nn.Parameter(bias)
 
 class LlavaModel(ModelBase):
     # def __init__(self, model_name_or_path: str):
@@ -118,11 +118,14 @@ class LlavaModel(ModelBase):
         #llm_backbone = HFCausalLLMBackbone("vicuna-7b", "llama", model_path)
 
         # Load LLaVA Model with Prismatic's architecture
-        model = load("reproduction-llava-v15+7b", hf_token=hf_token).eval()
-
+        if "7b" in model_path:
+            model = load("reproduction-llava-v15+7b", hf_token=hf_token).eval()
+        else:
+            model = load("reproduction-llava-v15+13b", hf_token=hf_token).eval()
+        model.to(device, dtype=torch.bfloat16)
         model.requires_grad_(False)  # Freeze model parameters
         import pdb
-        pdb.set_trace()
+        #pdb.set_trace()
         return model
 
     def _load_tokenizer(self, model_path):
@@ -137,6 +140,8 @@ class LlavaModel(ModelBase):
 
         tokenizer.padding_side = "left"
         tokenizer.pad_token = tokenizer.eos_token  # Ensure correct padding token
+        # tokenizer.padding_side = "right"
+        # tokenizer.pad_token = '<PAD>'
 
         return tokenizer
 

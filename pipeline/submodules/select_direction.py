@@ -9,7 +9,9 @@ from typing import List, Optional
 from jaxtyping import Float, Int
 from torch import Tensor
 from tqdm import tqdm
+from PIL import Image
 from einops import rearrange
+import requests
 
 from pipeline.model_utils.model_base import ModelBase
 from pipeline.utils.hook_utils import add_hooks, get_activation_addition_input_pre_hook, get_direction_ablation_input_pre_hook, get_direction_ablation_output_hook
@@ -28,48 +30,85 @@ def refusal_score(
     refusal_probs = probs[:, refusal_toks].sum(dim=-1)
 
     nonrefusal_probs = torch.ones_like(refusal_probs) - refusal_probs
+    import pdb
+    pdb.set_trace()
     return torch.log(refusal_probs + epsilon) - torch.log(nonrefusal_probs + epsilon)
 
+
 def get_refusal_scores(
-    model, instructions, tokenize_instructions_fn, refusal_toks, 
-    fwd_pre_hooks=[], fwd_hooks=[], batch_size=32
+    model, dataset, tokenize_instructions_fn, refusal_toks, is_vlm,
+    fwd_pre_hooks=[], fwd_hooks=[], batch_size=1
 ):
+    
+    instructions = [d["instruction"] for d in dataset]
+    if is_vlm:
+        pixel_dtype = next(model.parameters()).dtype
+        image_transform = model.vision_backbone.image_transform
+        import pdb
+        #pdb.set_trace()
+        pixel_values = [image_transform(d["pixel_values"]).to(dtype=pixel_dtype) for d in dataset]
+        pixel_values = torch.stack(pixel_values)
+        
+
     refusal_score_fn = functools.partial(refusal_score, refusal_toks=refusal_toks)
     refusal_scores = torch.zeros(len(instructions), device=model.device)
-
-    # Check if model is a PrismaticVLM
-    is_prismatic = hasattr(model, "vision_backbone") and hasattr(model, "llm_backbone")
-
+    
+    # Transform the image using the model's vision backbone transformation
     for i in range(0, len(instructions), batch_size):
-        tokenized_instructions = tokenize_instructions_fn(instructions[i:i+batch_size])
+        tokenized_instructions = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
 
-        # Add image dimension if model is PrismaticVLM, else set it to None
         inputs = {
-            "input_ids": tokenized_instructions.input_ids.to(model.device),
-            "attention_mask": tokenized_instructions.attention_mask.to(model.device),
+            "input_ids": tokenized_instructions.input_ids.to(model.device),  # Keep original dtype
+            "attention_mask": tokenized_instructions.attention_mask.to(model.device),  # Keep original dtype
         }
 
-        if is_prismatic:
-            inputs["pixel_values"] = None  # Ensure image is explicitly set to None
-
-        with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
-            logits = model(**inputs).logits
+        if is_vlm:
+            batched_pixel_values = pixel_values[i:i+batch_size]
+            inputs["pixel_values"] = batched_pixel_values.to(model.device)  # Use the expanded mock image batch in model's dtype
+            #with torch.autocast("cuda", dtype=pixel_dtype, enabled=True):  # Use model's dtype only for pixel_values
+            with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+                logits = model(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"], pixel_values=inputs["pixel_values"]).logits
+                last_token_logits = logits[:, -1, :]
+                pred_token_ids = torch.argmax(last_token_logits, dim=-1)
+                decoded_token = model.llm_backbone.tokenizer.decode(pred_token_ids[0])
+                import pdb
+                pdb.set_trace()
+        else:
+            with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+                logits = model(**inputs).logits  # Standard forward pass (no autocast)
 
         refusal_scores[i:i+batch_size] = refusal_score_fn(logits=logits)
 
     return refusal_scores
 
-def get_last_position_logits(model, tokenizer, instructions, tokenize_instructions_fn, fwd_pre_hooks=[], fwd_hooks=[], batch_size=32) -> Float[Tensor, "n_instructions d_vocab"]:
+def get_last_position_logits(model, tokenizer, dataset, tokenize_instructions_fn, is_vlm, fwd_pre_hooks=[], fwd_hooks=[], batch_size=1) -> Float[Tensor, "n_instructions d_vocab"]:
     last_position_logits = None
+    
+    instructions = [d["instruction"] for d in dataset]
+    if is_vlm:
+        pixel_dtype = next(model.parameters()).dtype
+        image_transform = model.vision_backbone.image_transform
+        pixel_values = [image_transform(d["pixel_values"]).to(dtype=pixel_dtype) for d in dataset]
+        pixel_values = torch.stack(pixel_values)
+
 
     for i in range(0, len(instructions), batch_size):
         tokenized_instructions = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
+        if is_vlm:
+            batched_pixel_values = pixel_values[i:i+batch_size]
 
         with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
-            logits = model(
-                input_ids=tokenized_instructions.input_ids.to(model.device),
-                attention_mask=tokenized_instructions.attention_mask.to(model.device),
+            if is_vlm:
+                 logits = model(
+                    input_ids=tokenized_instructions.input_ids.to(model.device),
+                    attention_mask=tokenized_instructions.attention_mask.to(model.device),
+                    pixel_values=batched_pixel_values.to(model.device)
             ).logits
+            else:
+                logits = model(
+                    input_ids=tokenized_instructions.input_ids.to(model.device),
+                    attention_mask=tokenized_instructions.attention_mask.to(model.device),
+                ).logits
 
         if last_position_logits is None:
             last_position_logits = logits[:, -1, :]
@@ -131,18 +170,19 @@ def select_direction(
     harmless_instructions,
     candidate_directions: Float[Tensor, 'n_pos n_layer d_model'],
     artifact_dir,
-    kl_threshold=0.1, # directions larger KL score are filtered out
-    induce_refusal_threshold=0.0, # directions with a lower inducing refusal score are filtered out
+    is_vlm,
+    kl_threshold=2, # directions larger KL score are filtered out
+    induce_refusal_threshold=-2, # directions with a lower inducing refusal score are filtered out
     prune_layer_percentage=0.2, # discard the directions extracted from the last 20% of the model
-    batch_size=32
+    batch_size=1
 ):
     if not os.path.exists(artifact_dir):
         os.makedirs(artifact_dir)
 
     n_pos, n_layer, d_model = candidate_directions.shape
 
-    baseline_refusal_scores_harmful = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_hooks=[], batch_size=batch_size)
-    baseline_refusal_scores_harmless = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_hooks=[], batch_size=batch_size)
+    baseline_refusal_scores_harmful = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_hooks=[], batch_size=batch_size)
+    baseline_refusal_scores_harmless = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_hooks=[], batch_size=batch_size)
 
     ablation_kl_div_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float64)
     ablation_refusal_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float64)
@@ -151,8 +191,9 @@ def select_direction(
     baseline_harmless_logits = get_last_position_logits(
         model=model_base.model,
         tokenizer=model_base.tokenizer,
-        instructions=harmless_instructions,
+        dataset=harmless_instructions,
         tokenize_instructions_fn=model_base.tokenize_instructions_fn,
+        is_vlm=is_vlm,
         fwd_pre_hooks=[],
         fwd_hooks=[],
         batch_size=batch_size
@@ -169,8 +210,9 @@ def select_direction(
             intervention_logits: Float[Tensor, "n_instructions 1 d_vocab"] = get_last_position_logits(
                 model=model_base.model,
                 tokenizer=model_base.tokenizer,
-                instructions=harmless_instructions,
+                dataset=harmless_instructions,
                 tokenize_instructions_fn=model_base.tokenize_instructions_fn,
+                is_vlm=is_vlm,
                 fwd_pre_hooks=fwd_pre_hooks,
                 fwd_hooks=fwd_hooks,
                 batch_size=batch_size
@@ -186,7 +228,7 @@ def select_direction(
             fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
             fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
 
-            refusal_scores = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
+            refusal_scores = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
             ablation_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
 
     for source_pos in range(-n_pos, 0):
@@ -198,7 +240,7 @@ def select_direction(
             fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_activation_addition_input_pre_hook(vector=refusal_vector, coeff=coeff))]
             fwd_hooks = []
 
-            refusal_scores = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
+            refusal_scores = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
             steering_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
 
     plot_refusal_scores(

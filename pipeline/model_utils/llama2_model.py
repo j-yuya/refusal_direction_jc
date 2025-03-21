@@ -110,7 +110,7 @@ class Llama2Model(ModelBase):
 
         # From: https://github.com/nrimsky/CAA/blob/main/generate_vectors.py
         tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.padding_side = "left"
+        tokenizer.padding_side = '<PAD>'
 
         return tokenizer
 
