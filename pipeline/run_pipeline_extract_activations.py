@@ -29,7 +29,7 @@ def load_and_sample_datasets(cfg, is_vlm):
         Tuple of datasets: (harmful_train, harmless_train, harmful_val, harmless_val)
     """
     random.seed(42)
-    harmful_train = random.sample(load_dataset_split(harmtype='harmful', split='train', instructions_only=True, is_vlm=is_vlm), cfg.n_train)
+    harmful_train = random.sample(load_dataset_split(harmtype='harmful', split='train', instructions_only=True, is_vlm=is_vlm), 100)
     harmless_train = random.sample(load_dataset_split(harmtype='harmless', split='train', instructions_only=True, is_vlm=is_vlm), cfg.n_train)
     harmful_val = random.sample(load_dataset_split(harmtype='harmful', split='val', instructions_only=True, is_vlm=is_vlm), cfg.n_val)
     harmless_val = random.sample(load_dataset_split(harmtype='harmless', split='val', instructions_only=True, is_vlm=is_vlm), cfg.n_val)
@@ -73,15 +73,20 @@ def run_pipeline(model_path, is_vlm):
     # Filter datasets based on refusal scores
     harmful_train, harmless_train, harmful_val, harmless_val = filter_data(cfg, model_base, harmful_train, harmless_train, harmful_val, harmless_val, is_vlm)
     # 1. Generate candidate refusal directions
-
+    print("length of harmful set")
+    print(len(harmful_train))
     if not os.path.exists(cfg.artifact_path()):
         os.makedirs(cfg.artifact_path())
     if not os.path.exists(os.path.join(cfg.artifact_path(), 'all_activations')):
         os.makedirs(os.path.join(cfg.artifact_path(), 'all_activations'))
 
-    all_activations = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmful_train, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)))
+    all_activations_harmful = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmful_train, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)))
  
-    torch.save(all_activations, os.path.join(cfg.artifact_path(), 'all_activations/all_activations.pt'))
+    torch.save(all_activations_harmful, os.path.join(cfg.artifact_path(), 'all_activations/all_activations_harmful.pt'))
+
+    all_activations_harmless = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmless_train, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)))
+ 
+    torch.save(all_activations_harmless, os.path.join(cfg.artifact_path(), 'all_activations/all_activations_harmless.pt'))
 
 if __name__ == "__main__":
     args = parse_arguments()

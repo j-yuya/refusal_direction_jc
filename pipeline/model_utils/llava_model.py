@@ -103,7 +103,7 @@ class LlavaModel(ModelBase):
     #     self.model_attn_modules = self._get_attn_modules()
     #     self.model_mlp_modules = self._get_mlp_modules()
 
-    def get_instruction_with_sys_prompt(instruction: str):
+    def get_instruction_with_sys_prompt(self, instruction: str):
         return "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {} ASSISTANT:".format(instruction)
 
     def _load_model(self, model_path, dtype=torch.float16):

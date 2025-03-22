@@ -16,7 +16,7 @@ def get_mean_activations_pre_hook(layer, cache: Float[Tensor, "pos layer d_model
         cache[:, layer] += (1.0 / n_samples) * activation[:, positions, :].sum(dim=0)
     return hook_fn
 
-def get_mean_activations(model, tokenizer, dataset, tokenize_instructions_fn, is_vlm, block_modules: List[torch.nn.Module], batch_size=32, positions=[-1]):
+def get_mean_activations(model, tokenizer, dataset, tokenize_instructions_fn, is_vlm, block_modules: List[torch.nn.Module], batch_size=1, positions=[-1]):
     torch.cuda.empty_cache()
 
     n_positions = len(positions)
@@ -60,7 +60,7 @@ def get_mean_activations(model, tokenizer, dataset, tokenize_instructions_fn, is
 
     return mean_activations
 
-def get_mean_diff(model, tokenizer, harmful_instructions, harmless_instructions, tokenize_instructions_fn, is_vlm, block_modules: List[torch.nn.Module], batch_size=32, positions=[-1]):
+def get_mean_diff(model, tokenizer, harmful_instructions, harmless_instructions, tokenize_instructions_fn, is_vlm, block_modules: List[torch.nn.Module], batch_size=1, positions=[-1]):
     mean_activations_harmful = get_mean_activations(model, tokenizer, harmful_instructions, tokenize_instructions_fn, is_vlm, block_modules, batch_size=batch_size, positions=positions)
     mean_activations_harmless = get_mean_activations(model, tokenizer, harmless_instructions, tokenize_instructions_fn, is_vlm, block_modules, batch_size=batch_size, positions=positions)
 

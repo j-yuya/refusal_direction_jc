@@ -7,9 +7,10 @@ import io
 dataset_dir_path = os.path.dirname(os.path.realpath(__file__))
 
 SPLITS = ['train', 'val', 'test']
-HARMTYPES = ['harmless', 'harmful', 'harmless_mm', "harmful_mm"]
+HARMTYPES = ['harmless', 'harmful', 'harmless_mmbench', "harmful_mmsafetybench", "harmful_mmsafetybench_typo", "harmful_complete", "harmful_msts"]
 USE_TYPO = False
-
+USE_MSTS = False
+COMPLETE = True
 SPLIT_DATASET_FILENAME = os.path.join(dataset_dir_path, 'splits/{harmtype}_{split}.json')
 
 PROCESSED_DATASET_NAMES = ["advbench", "tdc2023", "maliciousinstruct", "harmbench_val", "harmbench_test", "jailbreakbench", "strongreject", "alpaca"]
@@ -18,23 +19,42 @@ def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False,
     assert harmtype in HARMTYPES
     assert split in SPLITS
     if is_vlm:
-        if harmtype == "harmful":
-            if USE_TYPO:
-                harmtype="mmsafetybench_typo"
+        if "harmful" in harmtype:
+            if harmtype=="harmful_complete":
+                file_path1 = SPLIT_DATASET_FILENAME.format(harmtype="harmful_mmsafetybench", split=split)
+                file_path2 = SPLIT_DATASET_FILENAME.format(harmtype="harmful_msts", split=split)
+                with open(file_path1, 'r') as f1:
+                    dataset1 = json.load(f1)
+                pixel_values1 = []
+                for d in dataset1:
+                    pixel_values1.append(Image.open(d["image_path"]).convert("RGB"))
+                for i in range(0, len(dataset1)):
+                    dataset1[i]["pixel_values"] = pixel_values1[i]
+                    del dataset1[i]["image_path"]
+                with open(file_path2, 'r') as f2:
+                    dataset2 = json.load(f2)
+                pixel_values2 = []
+                for d in dataset2:
+                    pixel_values2.append(Image.open(d["image_path"]).convert("RGB"))
+                for i in range(0, len(dataset2)):
+                    dataset2[i]["instruction"] = dataset2[i]["instruction"].replace("Should I ", "Please give me instructions to ")
+                    dataset2[i]["pixel_values"] = pixel_values2[i]
+                    del dataset2[i]["image_path"]
+                return dataset1 + dataset2                
             else:
-                harmtype="mmsafetybench"
-            file_path = SPLIT_DATASET_FILENAME.format(harmtype=harmtype, split=split)
-            with open(file_path, 'r') as f:
-                dataset = json.load(f)
-            pixel_values = []
-            for d in dataset:
-                pixel_values.append(Image.open(d["image_path"]).convert("RGB"))
-            for i in range(0, len(dataset)):
-                dataset[i]["pixel_values"] = pixel_values[i]
-                del dataset[i]["image_path"]
-            return dataset
+                file_path = SPLIT_DATASET_FILENAME.format(harmtype=harmtype, split=split)
+                with open(file_path, 'r') as f:
+                    dataset = json.load(f)
+                pixel_values = []
+                for d in dataset:
+                    pixel_values.append(Image.open(d["image_path"]).convert("RGB"))
+                for i in range(0, len(dataset)):
+                    if harmtype=="harmful_msts":
+                        dataset[i]["instruction"] = dataset[i]["instruction"].replace("Should I ", "Please give me instructions to ")
+                    dataset[i]["pixel_values"] = pixel_values[i]
+                    del dataset[i]["image_path"]
+                return dataset
         else:
-            harmtype="mmbench"
             file_path = SPLIT_DATASET_FILENAME.format(harmtype=harmtype, split=split)
             with open(file_path, 'r') as f:
                 dataset = json.load(f)

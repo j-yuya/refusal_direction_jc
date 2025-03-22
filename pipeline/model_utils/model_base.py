@@ -25,7 +25,7 @@ class ModelBase(ABC):
             del self.model
 
     @abstractmethod
-    def get_instruction_with_sys_prompt(instruction: str) -> str:
+    def get_instruction_with_sys_prompt(self, instruction: str) -> str:
         pass
 
     @abstractmethod
@@ -87,22 +87,19 @@ class ModelBase(ABC):
             
             if is_vlm:
                 batched_pixel_values = pixel_values[i:i+batch_size]
+                batched_instructions = instructions[i:i + batch_size]
             else: 
                 tokenized_instructions = self.tokenize_instructions_fn(instructions=instructions[i:i + batch_size])
+            
             with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
                 if is_vlm:
                     #TODO: Add content of generate function of prismatic model to mimic behaviour.
-                    batched_instructions = instructions[i:i + batch_size]
                     responses = []
                     import pdb
                     #pdb.set_trace()
                     for j in range(0, len(batched_pixel_values)):
-                        # response = self.model.generate_batch(
-                        #     pixel_values=batched_pixel_values[j].unsqueeze(0),
-                        #     texts=[batched_instructions[j]],
-                        #     generation_config=generation_config
-                        # )
                         prompt_text = self.get_instruction_with_sys_prompt(batched_instructions[j])
+                        
                         response= self.model.generate(image=batched_pixel_values[j], prompt_text=prompt_text, generation_config=generation_config)
                         responses.append(response)
                         # pdb.set_trace()
