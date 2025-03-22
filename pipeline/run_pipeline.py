@@ -174,10 +174,10 @@ def run_pipeline(model_path, cfg_template):
         generate_and_save_completions_for_dataset(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd', dataset_name, harmful_test, is_vlm=is_vlm)
 
     # 3b. Evaluate completions and save results on harmful evaluation datasets
-    # for dataset_name in cfg.evaluation_datasets:
-    #     evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-    #     evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-    #     evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
+    for dataset_name in cfg.evaluation_datasets:
+        evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
+        evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
+        evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
     
     # 4a. Generate and save completions on harmless evaluation dataset
     harmless_test = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmless, split='test',  is_vlm=is_vlm), cfg.n_test_harmless)
@@ -198,8 +198,8 @@ def run_pipeline(model_path, cfg_template):
 
 
     # 4b. Evaluate completions and save results on harmless evaluation dataset
-    # evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
-    # evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
+    evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
+    evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
 
     # 5. Evaluate loss on harmless datasets
     # evaluate_loss_for_datasets(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline')

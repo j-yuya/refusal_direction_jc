@@ -37,7 +37,7 @@ class Config:
             self.train_dataset_harmful="harmful_complete"
             self.train_dataset_harmless="harmless_mmbench"
             self.is_vlm=True
-            self.kl_threshold=0.4
+            self.kl_threshold=0.1
             self.refusal_threshold=-1.5
         else:
             print("WARNING: Cfg-Template unknown, using default template")
