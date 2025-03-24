@@ -23,5 +23,8 @@ def construct_model_base(model_path: str) -> ModelBase:
     elif 'llava' in model_path.lower():
         from pipeline.model_utils.llava_model import LlavaModel
         return LlavaModel(model_path)
+    elif 'intern' in model_path.lower():
+        from pipeline.model_utils.internvl import InternVLModel
+        return InternVLModel(model_path)
     else:
         raise ValueError(f"Unknown model family: {model_path}")

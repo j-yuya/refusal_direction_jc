@@ -38,6 +38,14 @@ class Config:
             self.train_dataset_harmless="harmless_mmbench"
             self.is_vlm=True
             self.kl_threshold=0.1
-            self.refusal_threshold=-1.5
+            self.refusal_threshold=-4
+        elif template_name=="vlm_complete2":
+            self.n_train_harmful=20
+            self.train_dataset_harmful="harmful_complete"
+            self.train_dataset_harmless="harmless_mmbench"
+            self.is_vlm=True
+            self.kl_threshold=0.1
+            self.refusal_threshold=-4
         else:
             print("WARNING: Cfg-Template unknown, using default template")
+

@@ -100,7 +100,7 @@ tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True, use_fast
 
 # set the max number of tiles in `max_num`
 #pixel_values = load_image('/work/jcaspary/AstraFellowship-When-Do-VLM-Image-Jailbreaks-Transfer/images/trina/000.jpg', max_num=12).to(torch.bfloat16).cuda()
-generation_config = dict(max_new_tokens=1024, do_sample=True)
+generation_config = dict(max_new_tokens=10, do_sample=False)
 
 
 # pure-text conversation (纯文本对话)
@@ -208,13 +208,14 @@ for dataset in datasets:
         #pdb.set_trace()
         for j in range(0, len(batched_pixel_values)):
             prompt = f"<image>\n{batched_instructions[j]}"
+            generation_config = dict(max_new_tokens=1024, do_sample=False)
             response= model.chat(tokenizer, pixel_values[j].to(torch.bfloat16).cuda(), prompt, generation_config)
             responses.append(response)
 
             # Tokenization using `model.llm_backbone.tokenizer`
             
             system_message = model.system_message
-            
+            generation_config = dict(max_new_tokens=10, do_sample=False, return_dict_in_generate=True, output_scores=True)
 
             def get_prompt_for_internvl2(system_message: str, messages: list) -> str:
                 """
@@ -247,37 +248,62 @@ for dataset in datasets:
             messages.append([roles[1], None])
 
             query = get_prompt_for_internvl2(system_message=system_message, messages=messages)
-            num_patches_list = [pixel_values[j].shape[0]] if pixel_values[j] is not None else []
+            # Assume: pixel_values[j] has shape [num_patches, C, H, W]
+            num_patches_list = [pixel_values[j].shape[0]]
+            num_image_token = 256  # This is crucial!
 
-            img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>')
+            # 1. Insert correct number of IMG_CONTEXT tokens
+            IMG_CONTEXT_TOKEN = '<IMG_CONTEXT>'
+            img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
             model.img_context_token_id = img_context_token_id
             eos_token_id = tokenizer.convert_tokens_to_ids('<|im_end|>')
+            IMG_START_TOKEN = '<img>'
+            IMG_END_TOKEN = '</img>'
             for num_patches in num_patches_list:
-                image_tokens = '<img>' + '</img>' * 256 * num_patches + '</img>'
+                image_tokens = IMG_START_TOKEN + (IMG_CONTEXT_TOKEN * num_image_token * num_patches) + IMG_END_TOKEN
                 query = query.replace('<image>', image_tokens, 1)
 
+            
 
+            # 2. Tokenize
             model_inputs = tokenizer(query, return_tensors='pt')
+            input_ids2 = model_inputs.input_ids.to(model.device)
 
-            # Prepare Inputs for Second Forward Pass
-            # inputs2 = {
-            #     "input_ids": model_inputs["input_ids"].to(model.device),
-            #     "attention_mask": model_inputs["attention_mask"].to(model.device),
-            #     "pixel_values": pixel_values[j].to(model.device),  # Ensure pixel values are included
-            # }
+            n_img_tokens = input_ids2.eq(tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>')).sum().item()
+            image_flags = torch.ones(n_img_tokens, dtype=torch.long)
+
+            attention_mask2 = model_inputs.attention_mask.to(model.device)
             generation_config['eos_token_id'] = eos_token_id
-            input_ids2= model_inputs.input_ids.to(model.device)
-            attention_mask2 = model_inputs.to(model.device)
-            pixel_values2 =pixel_values[j].to(model.device)
+            # 3. Generate image_flags mask
+            img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
+            #image_flags = (input_ids2 == img_context_token_id).long().unsqueeze(-1).to(model.device)
+            image_flags = torch.tensor([1] * num_patches, dtype=torch.long).to(model.device)
+            # 4. Convert pixel_values to correct dtype/device
+            pixel_values2 = pixel_values[j].to(torch.bfloat16).to(model.device)
 
-            img_context_token_id = tokenizer.convert_tokens_to_ids('<IMG_CONTEXT>')
-            image_flags = (input_ids2 == img_context_token_id).long().unsqueeze(-1).to(model.device)
+            #pdb.set_trace()
+            # 5. Forward
+            response2 = model.generate(
+                pixel_values=pixel_values2,
+                input_ids=input_ids2,
+                attention_mask=attention_mask2,
+                **generation_config
+            )
 
-            # Forward Pass 2
-            response2 = model(pixel_values=pixel_values2, input_ids=input_ids2, attention_mask=attention_mask2, image_flags=image_flags)
-            token2 = torch.argmax(response2.logits[0,-1,:]).item()
-            token_str2 = model.llm_backbone.tokenizer.decode(token2).strip()
+            output=model(pixel_values=pixel_values2, input_ids=input_ids2, attention_mask=attention_mask2, image_flags=image_flags)
+
+            last_token_logits = response2.scores[0]
+            predicted_token_id = torch.argmax(last_token_logits).item()
+            predicted_token = tokenizer.decode([predicted_token_id])
+            print(predicted_token) 
+            response3 = tokenizer.batch_decode(response2.sequences, skip_special_tokens=True)[0]
+            response3 = response3.split('<|im_end|>')[0].strip()
             pdb.set_trace()
+
+            
+            # token2 = torch.argmax(response2.logits[0,-1,:]).item()
+            # token_str2 = model.llm_backbone.tokenizer.decode(token2).strip()
+            # pdb.set_trace()
 
 
 
