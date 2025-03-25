@@ -13,7 +13,7 @@ from torchvision.transforms.functional import InterpolationMode
 from PIL import Image
 import torchvision.transforms as T
 # Vicuna prompt format (Alpaca-style)
-INTERNVL_REFUSAL_TOKS = [295]  # Example: 'I' (check if needed)
+INTERNVL_REFUSAL_TOKS = [295, 2275]  # Example: 'I' (check if needed)
 
 def orthogonalize_internvl_weights(basemodel, direction: Float[Tensor, "d_model"]):
     lm = basemodel.model.language_model.model
@@ -285,29 +285,31 @@ class InternVLModel(ModelBase):
     def get_instruction_with_sys_prompt(self, instruction: str):
         return ""
 
-    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=8, max_new_tokens=64, is_vlm=False):
-        generation_config = GenerationConfig(max_new_tokens=max_new_tokens, do_sample=False)
-        generation_config.pad_token_id = self.tokenizer.pad_token_id
+    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, max_new_tokens=64, is_vlm=False):
+        generation_config = dict(max_new_tokens=max_new_tokens, do_sample=False)
+        generation_config["pad_token_id"] = self.tokenizer.pad_token_id
         
         completions = []
         instructions = [x['instruction'] for x in dataset]
         categories = [x['category'] for x in dataset]
 
-        pixel_values = [self.load_image_from_image(d["pixel_values"]) for d in dataset]
+        pixel_values = [d["pixel_values"] for d in dataset]
         eos_token_id = self.tokenizer.convert_tokens_to_ids('<|im_end|>')
         generation_config['eos_token_id'] = eos_token_id
         for i in tqdm(range(0, len(dataset), batch_size)):
             batched_pixel_values = pixel_values[i:i+batch_size]
             batched_instructions = instructions[i:i + batch_size]
-            inputs, pixel_values_formatted = tokenize_instructions_and_format_pixels_intern(self.tokenizer, batched_instructions, None, True, batched_pixel_values, self.model)
+            inputs, batched_pixel_values = tokenize_instructions_and_format_pixels_intern(self.tokenizer, batched_instructions, None, True, batched_pixel_values, self.model)
+            batched_pixel_values = [pixels.to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
+            batched_pixel_values = torch.stack(batched_pixel_values)
             with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
                 responses = []
                 for j in range(0, len(batched_pixel_values)):
                     
                     response_toks = self.model.generate(
-                        pixel_values=pixel_values_formatted[j].to(torch.bfloat16).to(self.model.device),
-                        input_ids=inputs[j].input_ids.to(self.model.device),
-                        attention_mask=inputs[j].attention_mask.to(self.model.device),
+                        pixel_values=batched_pixel_values.squeeze(0).to(self.model.device),
+                        input_ids=inputs.input_ids.to(self.model.device),
+                        attention_mask=inputs.attention_mask.to(self.model.device),
                         **generation_config
                     )
                     response = self.tokenizer.batch_decode(response_toks, skip_special_tokens=True)[0]

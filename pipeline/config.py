@@ -29,7 +29,7 @@ class Config:
     refusal_threshold: float = 0
 
     def artifact_path(self) -> str:
-        return os.path.join(os.path.dirname(os.path.realpath(__file__)), "runs", self.model_alias, f"{self.train_dataset_harmful}_{self.train_dataset_harmless}", f"{self.kl_threshold}_{self.refusal_threshold}")
+        return os.path.join(os.path.dirname(os.path.realpath(__file__)), "runs", self.model_alias, f"{self.train_dataset_harmful}_{self.train_dataset_harmless}", f"{self.kl_threshold}_{self.refusal_threshold}", f"n_train_harmful_{self.n_train_harmful}")
     
     def load_template(self, template_name: str):
         if template_name=="vlm_complete":
@@ -40,12 +40,12 @@ class Config:
             self.kl_threshold=0.1
             self.refusal_threshold=-4
         elif template_name=="vlm_complete2":
-            self.n_train_harmful=20
+            self.n_train_harmful=100
             self.train_dataset_harmful="harmful_complete"
             self.train_dataset_harmless="harmless_mmbench"
             self.is_vlm=True
             self.kl_threshold=0.1
-            self.refusal_threshold=-4
+            self.refusal_threshold=0
         else:
             print("WARNING: Cfg-Template unknown, using default template")
 

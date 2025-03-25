@@ -81,9 +81,14 @@ def get_all_direction_ablation_hooks(
     model_base,
     direction: Float[Tensor, 'd_model'],
 ):
-    fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
-    fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
-    fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
+    if type(model_base.model).__name__ !='InternVLChatModel':    
+        fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
+        fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
+        fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=direction)) for layer in range(model_base.model.config.num_hidden_layers)]
+    else:
+        fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=direction)) for layer in range(model_base.model.language_model.config.num_hidden_layers)]
+        fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=direction)) for layer in range(model_base.model.language_model.config.num_hidden_layers)]
+        fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=direction)) for layer in range(model_base.model.language_model.config.num_hidden_layers)]
     import pdb
     #pdb.set_trace()
     return fwd_pre_hooks, fwd_hooks
@@ -118,7 +123,7 @@ def get_activation_addition_input_pre_hook(vector: Float[Tensor, "d_model"], coe
             activation: Float[Tensor, "batch_size seq_len d_model"] = input
 
         vector = vector.to(activation)
-        activation += coeff * vector
+        activation = activation + coeff * vector 
 
         if isinstance(input, tuple):
             return (activation, *input[1:])

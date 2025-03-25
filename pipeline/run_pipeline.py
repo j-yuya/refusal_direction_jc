@@ -155,7 +155,8 @@ def run_pipeline(model_path, cfg_template):
     # Filter datasets based on refusal scores
     harmful_train, harmless_train, harmful_val, harmless_val = filter_data(cfg, model_base, harmful_train, harmless_train, harmful_val, harmless_val, is_vlm)
     # 1. Generate candidate refusal directions
-  
+    print(f"Length of filtered training harmful: {len(harmful_train)}")
+    print(f"Length of filtered training harmless {len(harmless_train)}")
     candidate_directions = generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train, is_vlm)
     
     # 2. Select the most effective refusal direction

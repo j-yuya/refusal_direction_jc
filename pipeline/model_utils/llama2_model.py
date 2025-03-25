@@ -137,3 +137,6 @@ class Llama2Model(ModelBase):
     
     def _get_act_add_mod_fn(self, direction: Float[Tensor, "d_model"], coeff, layer):
         return functools.partial(act_add_llama2_weights, direction=direction, coeff=coeff, layer=layer)
+    
+    def get_instruction_with_sys_prompt(self, instruction: str):
+        return ""

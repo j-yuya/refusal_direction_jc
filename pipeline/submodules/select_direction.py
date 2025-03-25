@@ -36,17 +36,19 @@ def refusal_score(
 
 def get_refusal_scores(
     model, dataset, tokenize_instructions_fn, refusal_toks, is_vlm,
-    fwd_pre_hooks=[], fwd_hooks=[], batch_size=1
+    fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, model_base=None
 ):
     
     instructions = [d["instruction"] for d in dataset]
-    if is_vlm:
+    if is_vlm and type(model).__name__ !='InternVLChatModel':
         pixel_dtype = next(model.parameters()).dtype
         image_transform = model.vision_backbone.image_transform
         import pdb
         #pdb.set_trace()
         pixel_values = [image_transform(d["pixel_values"]).to(dtype=pixel_dtype) for d in dataset]
         pixel_values = torch.stack(pixel_values)
+    elif type(model).__name__ =='InternVLChatModel':
+        pixel_values =  [(d["pixel_values"]) for d in dataset]
         
 
     refusal_score_fn = functools.partial(refusal_score, refusal_toks=refusal_toks)
@@ -54,60 +56,95 @@ def get_refusal_scores(
     
     # Transform the image using the model's vision backbone transformation
     for i in range(0, len(instructions), batch_size):
-        tokenized_instructions = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
-
-        inputs = {
-            "input_ids": tokenized_instructions.input_ids.to(model.device),  # Keep original dtype
-            "attention_mask": tokenized_instructions.attention_mask.to(model.device),  # Keep original dtype
-        }
-
-        if is_vlm:
-            batched_pixel_values = pixel_values[i:i+batch_size]
-            inputs["pixel_values"] = batched_pixel_values.to(model.device)  # Use the expanded mock image batch in model's dtype
-            #with torch.autocast("cuda", dtype=pixel_dtype, enabled=True):  # Use model's dtype only for pixel_values
-            with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
-                logits = model(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"], pixel_values=inputs["pixel_values"]).logits
+        if type(model).__name__ !='InternVLChatModel':
+            tokenized_instructions = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
+            inputs = {
+                "input_ids": tokenized_instructions.input_ids.to(model.device),  # Keep original dtype
+                "attention_mask": tokenized_instructions.attention_mask.to(model.device),  # Keep original dtype
+            }
+            if is_vlm:
+                batched_pixel_values = pixel_values[i:i+batch_size]
+                inputs["pixel_values"] = batched_pixel_values.to(model.device)  # Use the expanded mock image batch in model's dtype
+                with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+                    logits = model(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"], pixel_values=inputs["pixel_values"]).logits
+            else:
+                with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+                    logits = model(**inputs).logits  # Standard forward pass (no autocast)
         else:
+            inputs, batched_pixel_values = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=pixel_values[i:i+batch_size])
+            batched_pixel_values = [pixels.to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
+            batched_pixel_values = torch.stack(batched_pixel_values)
+            image_flags = torch.tensor([1] * batched_pixel_values[0].shape[0], dtype=torch.long).to(model.device)
+            generation_config = model_base.gen_config
+            import pdb
+
             with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
-                logits = model(**inputs).logits  # Standard forward pass (no autocast)
+                logits = model(
+                    pixel_values=batched_pixel_values.squeeze(0).to(model.device),
+                    input_ids=inputs.input_ids.to(model.device),
+                    attention_mask=inputs.attention_mask.to(model.device),
+                    image_flags=image_flags
+                ).logits
+
 
         refusal_scores[i:i+batch_size] = refusal_score_fn(logits=logits)
 
     return refusal_scores
 
-def get_last_position_logits(model, tokenizer, dataset, tokenize_instructions_fn, is_vlm, fwd_pre_hooks=[], fwd_hooks=[], batch_size=1) -> Float[Tensor, "n_instructions d_vocab"]:
+def get_last_position_logits(model, tokenizer, dataset, tokenize_instructions_fn, is_vlm, fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, model_base=None) -> Float[Tensor, "n_instructions d_vocab"]:
     last_position_logits = None
     
     instructions = [d["instruction"] for d in dataset]
-    if is_vlm:
+    if is_vlm and type(model).__name__ !='InternVLChatModel':
         pixel_dtype = next(model.parameters()).dtype
         image_transform = model.vision_backbone.image_transform
+        import pdb
+        #pdb.set_trace()
         pixel_values = [image_transform(d["pixel_values"]).to(dtype=pixel_dtype) for d in dataset]
         pixel_values = torch.stack(pixel_values)
+    elif type(model).__name__ =='InternVLChatModel':
+        pixel_values =  [(d["pixel_values"]) for d in dataset]
 
 
     for i in range(0, len(instructions), batch_size):
-        tokenized_instructions = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
-        if is_vlm:
-            batched_pixel_values = pixel_values[i:i+batch_size]
-
-        with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+        if type(model).__name__ !='InternVLChatModel':
+            tokenized_instructions = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
             if is_vlm:
-                 logits = model(
-                    input_ids=tokenized_instructions.input_ids.to(model.device),
-                    attention_mask=tokenized_instructions.attention_mask.to(model.device),
-                    pixel_values=batched_pixel_values.to(model.device)
-            ).logits
-            else:
-                logits = model(
-                    input_ids=tokenized_instructions.input_ids.to(model.device),
-                    attention_mask=tokenized_instructions.attention_mask.to(model.device),
-                ).logits
+                batched_pixel_values = pixel_values[i:i+batch_size]
 
+            with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+                if is_vlm:
+                    logits = model(
+                        input_ids=tokenized_instructions.input_ids.to(model.device),
+                        attention_mask=tokenized_instructions.attention_mask.to(model.device),
+                        pixel_values=batched_pixel_values.to(model.device)
+                ).logits
+                else:
+                    logits = model(
+                        input_ids=tokenized_instructions.input_ids.to(model.device),
+                        attention_mask=tokenized_instructions.attention_mask.to(model.device),
+                    ).logits
+
+            
+        else:
+            inputs, batched_pixel_values = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=pixel_values[i:i+batch_size])
+            batched_pixel_values = [pixels.to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
+            batched_pixel_values = torch.stack(batched_pixel_values)
+            image_flags = torch.tensor([1] * batched_pixel_values[0].shape[0], dtype=torch.long).to(model.device)
+
+            generation_config = model_base.gen_config
+            with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+                logits = model(
+                    pixel_values=batched_pixel_values.squeeze(0).to(model.device),
+                    input_ids=inputs.input_ids.to(model.device),
+                    attention_mask=inputs.attention_mask.to(model.device),
+                    image_flags=image_flags
+                ).logits
         if last_position_logits is None:
             last_position_logits = logits[:, -1, :]
         else:
             last_position_logits = torch.cat((last_position_logits, logits[:, -1, :]), dim=0)
+        
 
     return last_position_logits
 
@@ -165,8 +202,8 @@ def select_direction(
     candidate_directions: Float[Tensor, 'n_pos n_layer d_model'],
     artifact_dir,
     is_vlm,
-    kl_threshold=0.2, # directions larger KL score are filtered out
-    induce_refusal_threshold=-2, # directions with a lower inducing refusal score are filtered out
+    kl_threshold=0.1, # directions larger KL score are filtered out
+    induce_refusal_threshold=0, # directions with a lower inducing refusal score are filtered out
     prune_layer_percentage=0.2, # discard the directions extracted from the last 20% of the model
     batch_size=1
 ):
@@ -174,9 +211,9 @@ def select_direction(
         os.makedirs(artifact_dir)
 
     n_pos, n_layer, d_model = candidate_directions.shape
-
-    baseline_refusal_scores_harmful = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_hooks=[], batch_size=batch_size)
-    baseline_refusal_scores_harmless = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_hooks=[], batch_size=batch_size)
+    import pdb
+    baseline_refusal_scores_harmful = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_hooks=[], batch_size=batch_size, model_base=model_base)
+    baseline_refusal_scores_harmless = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_hooks=[], batch_size=batch_size, model_base=model_base)
 
     ablation_kl_div_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float64)
     ablation_refusal_scores = torch.zeros((n_pos, n_layer), device=model_base.model.device, dtype=torch.float64)
@@ -190,17 +227,22 @@ def select_direction(
         is_vlm=is_vlm,
         fwd_pre_hooks=[],
         fwd_hooks=[],
-        batch_size=batch_size
+        batch_size=batch_size,
+        model_base=model_base
     )
 
     for source_pos in range(-n_pos, 0):
         for source_layer in tqdm(range(n_layer), desc=f"Computing KL for source position {source_pos}"):
 
             ablation_dir = candidate_directions[source_pos, source_layer]
-            fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
-            fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
-            fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
-
+            if type(model_base.model).__name__ !='InternVLChatModel':
+                fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+                fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+                fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+            else:
+                fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=ablation_dir)) for layer in range(model_base.model.language_model.config.num_hidden_layers)]
+                fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.language_model.config.num_hidden_layers)]
+                fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.language_model.config.num_hidden_layers)]
             intervention_logits: Float[Tensor, "n_instructions 1 d_vocab"] = get_last_position_logits(
                 model=model_base.model,
                 tokenizer=model_base.tokenizer,
@@ -209,7 +251,8 @@ def select_direction(
                 is_vlm=is_vlm,
                 fwd_pre_hooks=fwd_pre_hooks,
                 fwd_hooks=fwd_hooks,
-                batch_size=batch_size
+                batch_size=batch_size,
+                model_base=model_base
             )
 
             ablation_kl_div_scores[source_pos, source_layer] = kl_div_fn(baseline_harmless_logits, intervention_logits, mask=None).mean(dim=0).item()
@@ -218,11 +261,16 @@ def select_direction(
         for source_layer in tqdm(range(n_layer), desc=f"Computing refusal ablation for source position {source_pos}"):
 
             ablation_dir = candidate_directions[source_pos, source_layer]
-            fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
-            fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
-            fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+            if type(model_base.model).__name__ !='InternVLChatModel':
+                fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+                fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+                fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.config.num_hidden_layers)]
+            else:
+                fwd_pre_hooks = [(model_base.model_block_modules[layer], get_direction_ablation_input_pre_hook(direction=ablation_dir)) for layer in range(model_base.model.language_model.config.num_hidden_layers)]
+                fwd_hooks = [(model_base.model_attn_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.language_model.config.num_hidden_layers)]
+                fwd_hooks += [(model_base.model_mlp_modules[layer], get_direction_ablation_output_hook(direction=ablation_dir)) for layer in range(model_base.model.language_model.config.num_hidden_layers)]
 
-            refusal_scores = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
+            refusal_scores = get_refusal_scores(model_base.model, harmful_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size, model_base=model_base)
             ablation_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
 
     for source_pos in range(-n_pos, 0):
@@ -234,7 +282,7 @@ def select_direction(
             fwd_pre_hooks = [(model_base.model_block_modules[source_layer], get_activation_addition_input_pre_hook(vector=refusal_vector, coeff=coeff))]
             fwd_hooks = []
 
-            refusal_scores = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size)
+            refusal_scores = get_refusal_scores(model_base.model, harmless_instructions, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, batch_size=batch_size, model_base=model_base)
             steering_refusal_scores[source_pos, source_layer] = refusal_scores.mean().item()
 
     plot_refusal_scores(
