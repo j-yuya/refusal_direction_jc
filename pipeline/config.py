@@ -46,6 +46,14 @@ class Config:
             self.is_vlm=True
             self.kl_threshold=0.1
             self.refusal_threshold=0
+        elif template_name=="hades_jailbreak":
+            self.train_dataset_harmful="harmful_hades"
+            self.evaluation_datasets = ("hades",)
+            self.is_vlm=True
+        elif template_name=="hades_jailbreak_shuffled":
+            self.train_dataset_harmful="harmful_hades"
+            self.evaluation_datasets = ("hades_shuffled",)
+            self.is_vlm=True
         else:
             print("WARNING: Cfg-Template unknown, using default template")
 

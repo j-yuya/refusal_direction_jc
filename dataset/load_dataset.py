@@ -4,16 +4,19 @@ from PIL import Image
 import requests
 import base64
 import io
+from datasets import load_dataset
+
+
 dataset_dir_path = os.path.dirname(os.path.realpath(__file__))
 
 SPLITS = ['train', 'val', 'test']
-HARMTYPES = ['harmless', 'harmful', 'harmless_mmbench', "harmful_mmsafetybench", "harmful_mmsafetybench_typo", "harmful_complete", "harmful_msts"]
+HARMTYPES = ['harmless', 'harmful', 'harmless_mmbench', "harmful_mmsafetybench", "harmful_mmsafetybench_typo", "harmful_complete", "harmful_msts", "harmful_hades"]
 USE_TYPO = False
 USE_MSTS = False
 COMPLETE = True
 SPLIT_DATASET_FILENAME = os.path.join(dataset_dir_path, 'splits/{harmtype}_{split}.json')
 
-PROCESSED_DATASET_NAMES = ["advbench", "tdc2023", "maliciousinstruct", "harmbench_val", "harmbench_test", "jailbreakbench", "strongreject", "alpaca"]
+PROCESSED_DATASET_NAMES = ["advbench", "tdc2023", "maliciousinstruct", "harmbench_val", "harmbench_test", "jailbreakbench", "strongreject", "alpaca", "hades"]
 
 def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False, is_vlm: bool=False):
     assert harmtype in HARMTYPES
@@ -41,6 +44,20 @@ def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False,
                     dataset2[i]["pixel_values"] = pixel_values2[i]
                     del dataset2[i]["image_path"]
                 return dataset1 + dataset2                
+            elif harmtype=="harmful_hades":
+                assert split=="test", "Hades has only test split"
+                hades = load_dataset("Monosail/HADES")['test']
+                dataset = []
+                for entry in hades:
+                    # Use image of sixth optimization step, need to validate
+                    # if this includes gradient info.
+                    if entry["step"] == 5:
+                        dataset_entry = {}
+                        dataset_entry["instruction"] = entry["instruction"]
+                        dataset_entry["pixel_values"] = entry["image"].convert("RGB")
+                        dataset_entry["category"] = entry["category"]
+                        dataset.append(dataset_entry)
+                return dataset
             else:
                 file_path = SPLIT_DATASET_FILENAME.format(harmtype=harmtype, split=split)
                 with open(file_path, 'r') as f:
@@ -81,13 +98,24 @@ def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False,
 
 def load_dataset(dataset_name, instructions_only: bool=False):
     assert dataset_name in PROCESSED_DATASET_NAMES, f"Valid datasets: {PROCESSED_DATASET_NAMES}"
+    if dataset_name == "hades":
+        hades = load_dataset("Monosail/HADES")['test']
+        dataset = []
+        for entry in hades:
+            if entry["step"] == 5:
+                dataset_entry = {}
+                dataset_entry["instruction"] = entry["instruction"]
+                dataset_entry["pixel_values"] = entry["image"].convert("RGB")
+                dataset_entry["category"] = entry["category"]
+                dataset.append(dataset_entry)
+        return dataset
+    else:
+        file_path = os.path.join(dataset_dir_path, 'processed', f"{dataset_name}.json")
 
-    file_path = os.path.join(dataset_dir_path, 'processed', f"{dataset_name}.json")
+        with open(file_path, 'r') as f:
+            dataset = json.load(f)
 
-    with open(file_path, 'r') as f:
-        dataset = json.load(f)
-
-    #if instructions_only:
-    #    dataset = [d['instruction'] for d in dataset]
- 
-    return dataset
+        #if instructions_only:
+        #    dataset = [d['instruction'] for d in dataset]
+    
+        return dataset
