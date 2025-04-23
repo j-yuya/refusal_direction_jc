@@ -1,7 +1,7 @@
 from PIL import Image
 import numpy as np
 import random
-from strong_reject.evaluate import evaluate_dataset
+from strong_reject.evaluate import evaluate
 
 
 def shuffle_image_patches(pil_image, num_patches=4):
@@ -71,6 +71,6 @@ def shuffle_text_instruction(prompt: str) -> str:
     random.shuffle(words)
     return ' '.join(words)
 
-def rate_jailbreak(prompt: str) -> float:
-    eval = evaluate_dataset([prompt], ["strongreject_fine_tuned"])["score"]
+def rate_jailbreak(prompt: str, response: str) -> float:
+    eval = evaluate(prompt, response, ["strongreject_finetuned"])["score"]
     return eval

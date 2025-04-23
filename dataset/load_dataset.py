@@ -4,7 +4,7 @@ from PIL import Image
 import requests
 import base64
 import io
-from datasets import load_dataset
+from datasets import load_dataset as load_dataset_hf
 
 
 dataset_dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -46,7 +46,7 @@ def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False,
                 return dataset1 + dataset2                
             elif harmtype=="harmful_hades":
                 assert split=="test", "Hades has only test split"
-                hades = load_dataset("Monosail/HADES")['test']
+                hades = load_dataset_hf("Monosail/HADES")['test']
                 dataset = []
                 for entry in hades:
                     # Use image of sixth optimization step, need to validate
@@ -99,7 +99,7 @@ def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False,
 def load_dataset(dataset_name, instructions_only: bool=False):
     assert dataset_name in PROCESSED_DATASET_NAMES, f"Valid datasets: {PROCESSED_DATASET_NAMES}"
     if dataset_name == "hades":
-        hades = load_dataset("Monosail/HADES")['test']
+        hades = load_dataset_hf("Monosail/HADES")['test']
         dataset = []
         for entry in hades:
             if entry["step"] == 5:
