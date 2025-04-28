@@ -72,5 +72,8 @@ def shuffle_text_instruction(prompt: str) -> str:
     return ' '.join(words)
 
 def rate_jailbreak(prompt: str, response: str) -> float:
-    eval = evaluate(prompt, response, ["strongreject_finetuned"])["score"]
+    print(prompt)
+    print(response)
+    eval = evaluate(prompt, response, ["strongreject_finetuned"])[0]["score"]
+    print(eval)
     return eval

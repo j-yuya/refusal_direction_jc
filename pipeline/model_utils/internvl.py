@@ -13,7 +13,7 @@ from torchvision.transforms.functional import InterpolationMode
 from PIL import Image
 import torchvision.transforms as T
 # Vicuna prompt format (Alpaca-style)
-INTERNVL_REFUSAL_TOKS = [295, 2275]  # Example: 'I' (check if needed)
+INTERNVL_REFUSAL_TOKS = [295, 2275]  # Example: 'I' 'As (check if needed)
 
 def orthogonalize_internvl_weights(basemodel, direction: Float[Tensor, "d_model"]):
     lm = basemodel.model.language_model.model

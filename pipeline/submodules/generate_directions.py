@@ -29,12 +29,12 @@ def get_mean_activations(model, tokenizer, dataset, tokenize_instructions_fn, is
         d_model = model.language_model.config.hidden_size
 
     instructions = [d["instruction"] for d in dataset]
-    if is_vlm and type(model).__name__ !='InternVLChatModel':
+    if is_vlm and type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='CogVLMForCausalLM' and type(model).__name__ !='MiniCPMV':
         pixel_dtype = next(model.parameters()).dtype
         image_transform = model.vision_backbone.image_transform
         pixel_values = [image_transform(d["pixel_values"]).to(dtype=pixel_dtype) for d in dataset]
         pixel_values = torch.stack(pixel_values)
-    elif type(model).__name__ =='InternVLChatModel':
+    elif type(model).__name__ =='InternVLChatModel' or type(model).__name__ =='CogVLMForCausalLM' or type(model).__name__ =='MiniCPMV':
         pixel_values =  [(d["pixel_values"]) for d in dataset]
 
     # we store the mean activations in high-precision to avoid numerical issues

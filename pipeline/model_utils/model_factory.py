@@ -26,5 +26,11 @@ def construct_model_base(model_path: str) -> ModelBase:
     elif 'intern' in model_path.lower():
         from pipeline.model_utils.internvl import InternVLModel
         return InternVLModel(model_path)
+    elif 'cog' in model_path.lower():
+        from pipeline.model_utils.cog_vlm2_model import CogVLM2
+        return CogVLM2(model_path)
+    elif 'cpm' in model_path.lower():
+        from pipeline.model_utils.mini_cpm_model import MiniCPMV26
+        return MiniCPMV26(model_path)
     else:
         raise ValueError(f"Unknown model family: {model_path}")

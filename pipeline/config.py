@@ -50,6 +50,10 @@ class Config:
             self.train_dataset_harmful="harmful_hades"
             self.evaluation_datasets = ("hades",)
             self.is_vlm=True
+        elif template_name=="figstep_jailbreak":
+            self.train_dataset_harmful="harmful_figstep"
+            self.evaluation_datasets = ("figstep",)
+            self.is_vlm=True
         elif template_name=="hades_jailbreak_shuffled":
             self.train_dataset_harmful="harmful_hades"
             self.evaluation_datasets = ("hades_shuffled",)

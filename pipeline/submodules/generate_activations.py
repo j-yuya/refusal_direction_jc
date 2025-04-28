@@ -32,12 +32,12 @@ def get_all_activations(model, tokenizer, dataset, tokenize_instructions_fn, is_
         n_layers = model.language_model.config.num_hidden_layers
     instructions = [d["instruction"] for d in dataset]
 
-    if is_vlm and type(model).__name__ !='InternVLChatModel':
+    if is_vlm and type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='CogVLMForCausalLM' and type(model).__name__ !='MiniCPMV':
         pixel_dtype = next(model.parameters()).dtype
         image_transform = model.vision_backbone.image_transform
         pixel_values = [image_transform(d["pixel_values"]).to(dtype=pixel_dtype) for d in dataset]
         pixel_values = torch.stack(pixel_values)
-    elif type(model).__name__ =='InternVLChatModel':
+    elif type(model).__name__ =='InternVLChatModel' or type(model).__name__ =='CogVLMForCausalLM' or type(model).__name__ =='MiniCPMV':
         pixel_values =  [(d["pixel_values"]) for d in dataset]
     # Initialize cache: {layer_idx: [activation_tensor_per_sample]}
     activation_cache: Dict[int, List[torch.Tensor]] = {layer: [] for layer in range(n_layers)}
@@ -53,7 +53,7 @@ def get_all_activations(model, tokenizer, dataset, tokenize_instructions_fn, is_
         if is_vlm:
             batched_pixel_values = pixel_values[i:i+batch_size]
         
-        if type(model).__name__ !='InternVLChatModel':
+        if type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='MiniCPMV':
             inputs = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
         else:
             inputs, batched_pixel_values = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=batched_pixel_values)
