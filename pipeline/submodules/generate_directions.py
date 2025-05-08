@@ -7,6 +7,7 @@ from torch import Tensor
 from tqdm import tqdm
 from PIL import Image
 from transformers import GenerationConfig
+from pipeline.model_utils.cog_vlm2_model import transform_image
 
 from pipeline.utils.hook_utils import add_hooks
 from pipeline.model_utils.model_base import ModelBase
@@ -29,14 +30,17 @@ def get_mean_activations(model, tokenizer, dataset, tokenize_instructions_fn, is
         d_model = model.language_model.config.hidden_size
 
     instructions = [d["instruction"] for d in dataset]
+
     if is_vlm and type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='CogVLMForCausalLM' and type(model).__name__ !='MiniCPMV':
         pixel_dtype = next(model.parameters()).dtype
         image_transform = model.vision_backbone.image_transform
         pixel_values = [image_transform(d["pixel_values"]).to(dtype=pixel_dtype) for d in dataset]
         pixel_values = torch.stack(pixel_values)
-    elif type(model).__name__ =='InternVLChatModel' or type(model).__name__ =='CogVLMForCausalLM' or type(model).__name__ =='MiniCPMV':
+    elif type(model).__name__ =='InternVLChatModel' or type(model).__name__ =='MiniCPMV':
         pixel_values =  [(d["pixel_values"]) for d in dataset]
-
+    elif type(model).__name__ =='CogVLMForCausalLM':
+        pixel_values =  [(d["pixel_values"]) for d in dataset]
+        pixel_values =  [transform_image(pixels).to(dtype=torch.bfloat16) for pixels in pixel_values]
     # we store the mean activations in high-precision to avoid numerical issues
     mean_activations = torch.zeros((n_positions, n_layers, d_model), dtype=torch.float64, device=model.device)
 
@@ -47,15 +51,17 @@ def get_mean_activations(model, tokenizer, dataset, tokenize_instructions_fn, is
         if is_vlm:
             batched_pixel_values = pixel_values[i:i+batch_size]
         
-        if type(model).__name__ !='InternVLChatModel':
+        if type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='MiniCPMV' and type(model).__name__ !='CogVLMForCausalLM':
             inputs = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
+        elif type(model).__name__ =='MiniCPMV' or type(model).__name__ =='CogVLMForCausalLM':
+            inputs, _ = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=batched_pixel_values, model=model)
         else:
             inputs, batched_pixel_values = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=batched_pixel_values)
             batched_pixel_values = [pixels.to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
             batched_pixel_values = torch.stack(batched_pixel_values)
         
         with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=[]):
-            if is_vlm and type(model).__name__ !='InternVLChatModel':
+            if is_vlm and type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='MiniCPMV' and type(model).__name__ !='CogVLMForCausalLM':
                 model(
                 input_ids=inputs.input_ids.to(model.device),
                 attention_mask=inputs.attention_mask.to(model.device),
@@ -69,6 +75,20 @@ def get_mean_activations(model, tokenizer, dataset, tokenize_instructions_fn, is
                     input_ids=inputs.input_ids.to(model.device),
                     attention_mask=inputs.attention_mask.to(model.device),
                     image_flags=image_flags
+                )
+            elif is_vlm and type(model).__name__ =='MiniCPMV':
+                position_ids = (inputs["attention_mask"].cumsum(dim=1) - 1).clamp(min=0)
+                inputs["position_ids"] = position_ids
+                model(inputs.to(model.device))
+            elif is_vlm and type(model).__name__ =='CogVLMForCausalLM':
+                images = []
+                for image in batched_pixel_values:
+                    images.append([image.to(torch.bfloat16).to(device=model.device)])
+                model(
+                    input_ids=inputs['input_ids'].to(model.device),
+                    images=images,  # ✅ corrected
+                    attention_mask=inputs['attention_mask'].to(model.device),
+                    token_type_ids=inputs['token_type_ids'].to(model.device),
                 )
             else:
                 model(

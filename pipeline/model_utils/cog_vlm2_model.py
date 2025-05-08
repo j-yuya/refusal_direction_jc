@@ -26,6 +26,7 @@ def tokenize_instructions_cogvlm2(
     instructions: List[str],
     outputs: List[str] = None,
     include_trailing_whitespace=True,
+    pixel_values=None,
     model=None,
 ):
     input_by_model = build_conversation_input_ids(
@@ -36,7 +37,7 @@ def tokenize_instructions_cogvlm2(
         model=model,
     )
 
-    return input_by_model
+    return input_by_model, None
 
 def orthogonalize_cogvlm_weights(basemodel, direction: torch.Tensor):
     """
@@ -284,7 +285,7 @@ class CogVLM2(ModelBase):
         for i in tqdm(range(0, len(dataset), batch_size)):
             batched_pixel_values = pixel_values[i:i+batch_size]
             batched_instructions = instructions[i:i + batch_size]
-            inputs = tokenize_instructions_cogvlm2(self.tokenizer, batched_instructions, None, True, self.model)
+            inputs, _ = tokenize_instructions_cogvlm2(self.tokenizer, batched_instructions, None, True, model=self.model)
         
             batched_pixel_values = [transform_image(pixels).to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
             batched_pixel_values = torch.stack(batched_pixel_values)
@@ -302,6 +303,7 @@ class CogVLM2(ModelBase):
                     response = self.tokenizer.batch_decode(response_toks, skip_special_tokens=True)[0]
                     
                     response = response.split(' Answer:')[1].strip()
+                    print(response)
                     responses.append(response)
                 for j in range(0, len(batched_pixel_values)):
                     completions.append({

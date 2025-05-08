@@ -10,7 +10,7 @@ import csv
 dataset_dir_path = os.path.dirname(os.path.realpath(__file__))
 
 SPLITS = ['train', 'val', 'test']
-HARMTYPES = ['harmless', 'harmful', 'harmless_mmbench', "harmful_mmsafetybench", "harmful_mmsafetybench_typo", "harmful_complete", "harmful_msts", "harmful_hades", "harmful_figstep"]
+HARMTYPES = ['harmless', 'harmless_vlm', 'harmful', 'harmless_mmbench', "harmful_mmsafetybench", "harmful_mmsafetybench_typo", "harmful_complete", "harmful_msts", "harmful_hades", "harmful_figstep"]
 USE_TYPO = False
 USE_MSTS = False
 COMPLETE = True
@@ -100,6 +100,17 @@ def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False,
                     dataset[i]["pixel_values"] = pixel_values[i]
                     del dataset[i]["image_path"]
                 return dataset
+        elif harmtype=='harmless_vlm':
+            assert split=="test", "VisitBench only has test split"
+            visit_bench = load_dataset_hf("mlfoundations/VisIT-Bench")['test']
+            dataset = []
+            for entry in visit_bench:
+                dataset_entry = {}
+                dataset_entry["instruction"] = entry["instruction"]
+                dataset_entry["pixel_values"] = entry["image"].convert("RGB")
+                dataset_entry["category"] = entry["instruction_category"]
+                dataset.append(dataset_entry)
+            return dataset
         else:
             file_path = SPLIT_DATASET_FILENAME.format(harmtype=harmtype, split=split)
             with open(file_path, 'r') as f:
@@ -141,6 +152,16 @@ def load_dataset(dataset_name, instructions_only: bool=False):
                 dataset_entry["pixel_values"] = entry["image"].convert("RGB")
                 dataset_entry["category"] = entry["category"]
                 dataset.append(dataset_entry)
+        return dataset
+    elif dataset_name=="visitbench":
+        visit_bench = load_dataset_hf("mlfoundations/VisIT-Bench")['test']
+        dataset = []
+        for entry in visit_bench:
+            dataset_entry = {}
+            dataset_entry["instruction"] = entry["instruction"]
+            dataset_entry["pixel_values"] = entry["image"].convert("RGB")
+            dataset_entry["category"] = entry["instruction_category"]
+            dataset.append(dataset_entry)
         return dataset
     elif dataset_name=="figstep":
         figstep_images_path = "/ceph/jcaspary/FigStep/data/images/SafeBench"

@@ -54,7 +54,7 @@ def tokenize_instructions_minicpm(
 
     input_by_model = model.processor(instructions_processed, images, do_pad=True)
     input_by_model.pop("image_sizes")
-    return input_by_model
+    return input_by_model, None
 
 def orthogonalize_minicpmv_weights(basemodel, direction: torch.Tensor):
     lm = basemodel.model.llm.model  # ✅ Points to Qwen2Model
@@ -291,7 +291,7 @@ class MiniCPMV26(ModelBase):
         for i in tqdm(range(0, len(dataset), batch_size)):
             batched_pixel_values = pixel_values[i:i+batch_size]
             batched_instructions = instructions[i:i + batch_size]
-            inputs = tokenize_instructions_minicpm(self.tokenizer, batched_instructions, None, True, batched_pixel_values, self.model)
+            inputs,_ = tokenize_instructions_minicpm(self.tokenizer, batched_instructions, None, True, batched_pixel_values, self.model)
             inputs.to(self.model.device)
             with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
                 responses = []

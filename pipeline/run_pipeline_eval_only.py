@@ -207,10 +207,13 @@ def run_pipeline(model_path, cfg_template):
 
     # 3a. Generate and save completions on harmful evaluation datasets
     harmful_test = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmful, split='test', is_vlm=is_vlm), cfg.n_test_harmful)
+    harmless_test = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmless, split='test', is_vlm=is_vlm), cfg.n_test_harmless)
 
     for dataset_name in cfg.evaluation_datasets:
         if dataset_name=="hades_shuffled":
             shuffle_generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name, harmful_test, is_vlm=is_vlm)
+        elif dataset_name=="visitbench":
+            generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name, harmless_test, is_vlm=is_vlm)
         else:
             generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name, harmful_test, is_vlm=is_vlm)
 
@@ -222,7 +225,10 @@ def run_pipeline(model_path, cfg_template):
         os.makedirs(os.path.join(cfg.artifact_path(), 'all_activations'))
     #TODO: applying on training data induces bias
     all_activations_harmful = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmful_test, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)), model_base=model_base)
-    torch.save(all_activations_harmful, os.path.join(cfg.artifact_path(), f'all_activations/{dataset_name}_all_activations_harmful.pt'))
+    all_activations_harmless = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmless_test, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)), model_base=model_base)
+    
+    torch.save(all_activations_harmful, os.path.join(cfg.artifact_path(), f'all_activations/{cfg.train_dataset_harmful}_all_activations_harmful.pt'))
+    torch.save(all_activations_harmless, os.path.join(cfg.artifact_path(), f'all_activations/{cfg.train_dataset_harmless}_all_activations_harmless.pt'))
 
 
     # 5. Evaluate loss on harmless datasets
