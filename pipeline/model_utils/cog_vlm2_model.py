@@ -91,6 +91,7 @@ def build_conversation_input_ids(
     template_version: Optional[Literal["base", "chat", "vqa"]] = None,
     model=None,
 ):
+    tokenizer.pad_token_id = 128002
     image_size: int = model.config.vision_config['image_size']
     patch_size: int = model.config.vision_config['patch_size']
     template_version = template_version or model.config.template_version

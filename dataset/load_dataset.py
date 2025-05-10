@@ -10,7 +10,7 @@ import csv
 dataset_dir_path = os.path.dirname(os.path.realpath(__file__))
 
 SPLITS = ['train', 'val', 'test']
-HARMTYPES = ['harmless', 'harmless_vlm', 'harmful', 'harmless_mmbench', "harmful_mmsafetybench", "harmful_mmsafetybench_typo", "harmful_complete", "harmful_msts", "harmful_hades", "harmful_figstep"]
+HARMTYPES = ['harmless', 'harmless_vlm', 'harmful', 'harmless_mmbench', "harmful_mmsafetybench", "harmful_mmsafetybench_typo", "harmful_complete", "harmful_msts", "harmful_hades", "harmful_figstep", "harmful_advbench_vlm"]
 USE_TYPO = False
 USE_MSTS = False
 COMPLETE = True
@@ -86,6 +86,17 @@ def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False,
                         dataset_entry["instruction"] = dataset_instruction
                         dataset_entry["category"] = category_name
                         dataset.append(dataset_entry)
+                return dataset
+            elif harmtype=="harmful_advbench_vlm":
+                image_path = os.path.join(dataset_dir_path, 'images/000.jpg')
+                file_path = SPLIT_DATASET_FILENAME.format(harmtype=harmtype, split=split)
+                with open(file_path, 'r') as f:
+                    dataset = json.load(f)
+                pixel_values = []
+                for d in dataset:
+                    pixel_values.append(Image.open(image_path).convert("RGB"))
+                for i in range(0, len(dataset)):
+                    dataset[i]["pixel_values"] = pixel_values[i]
                 return dataset
             else:
                 file_path = SPLIT_DATASET_FILENAME.format(harmtype=harmtype, split=split)

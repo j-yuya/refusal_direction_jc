@@ -27,6 +27,7 @@ class Config:
     is_vlm: bool = False
     kl_threshold: float = 0.1
     refusal_threshold: float = 0
+    direction_dir: str = None
 
     def artifact_path(self) -> str:
         return os.path.join(os.path.dirname(os.path.realpath(__file__)), "runs", self.model_alias, f"{self.train_dataset_harmful}_{self.train_dataset_harmless}", f"{self.kl_threshold}_{self.refusal_threshold}", f"n_train_harmful_{self.n_train_harmful}")
@@ -47,12 +48,12 @@ class Config:
             self.kl_threshold=0.1
             self.refusal_threshold=0
         elif template_name=="vlm_complete3":
-            self.n_train_harmful=300
+            self.n_train_harmful=800
             self.train_dataset_harmful="harmful_complete"
             self.train_dataset_harmless="harmless_mmbench"
             self.is_vlm=True
             self.kl_threshold=0.1
-            self.refusal_threshold=0
+            self.refusal_threshold=0.1
         elif template_name=="vlm_complete2_eval":
             self.n_train_harmful=100
             self.train_dataset_harmful="harmful_complete"
@@ -75,6 +76,11 @@ class Config:
             self.train_dataset_harmful="harmful_hades"
             self.train_dataset_harmless="harmless_vlm"
             self.evaluation_datasets = ("hades","visitbench")
+            self.is_vlm=True
+        elif template_name=="gen_adv_answers":
+            self.train_dataset_harmful="harmful_advbench_vlm"
+            self.train_dataset_harmless="harmless_vlm"
+            self.evaluation_datasets = ("harmful_complete",)
             self.is_vlm=True
         else:
             print("WARNING: Cfg-Template unknown, using default template")
