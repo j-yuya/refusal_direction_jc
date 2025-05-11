@@ -39,7 +39,7 @@ class Config:
             self.train_dataset_harmless="harmless_mmbench"
             self.is_vlm=True
             self.kl_threshold=0.1
-            self.refusal_threshold=-4
+            self.refusal_threshold=0
         elif template_name=="vlm_complete2":
             self.n_train_harmful=100
             self.train_dataset_harmful="harmful_complete"
@@ -54,6 +54,12 @@ class Config:
             self.is_vlm=True
             self.kl_threshold=0.1
             self.refusal_threshold=0.1
+        elif template_name=="vlm_complete4":
+            self.train_dataset_harmful="harmful_advbench_vlm"
+            self.train_dataset_harmless="harmless"
+            self.is_vlm=True
+            self.kl_threshold=0.1
+            self.refusal_threshold=0
         elif template_name=="vlm_complete2_eval":
             self.n_train_harmful=100
             self.train_dataset_harmful="harmful_complete"

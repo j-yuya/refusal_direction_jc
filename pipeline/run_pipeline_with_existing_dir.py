@@ -176,10 +176,10 @@ def run_pipeline(model_path, cfg_template, direction_dir):
     harmful_test = load_dataset_split(harmtype=cfg.train_dataset_harmful, split='test', is_vlm=is_vlm)
 
     for dataset_name in cfg.evaluation_datasets:
-        generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name, harmful_train, is_vlm=is_vlm)
         generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', dataset_name, harmful_train, is_vlm=is_vlm)
-        generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name, harmful_test, is_vlm=is_vlm)
         generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', dataset_name, harmful_test, is_vlm=is_vlm)
+        generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name, harmful_train, is_vlm=is_vlm)
+        generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name, harmful_test, is_vlm=is_vlm)
 
     
 
