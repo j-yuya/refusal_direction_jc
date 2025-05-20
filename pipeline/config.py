@@ -29,9 +29,15 @@ class Config:
     refusal_threshold: float = 0
     direction_dir: str = None
 
+    def get_direction_dir(self):
+        return self.direction_dir.split(os.sep)[-3:]
+
     def artifact_path(self) -> str:
-        return os.path.join(os.path.dirname(os.path.realpath(__file__)), "runs", self.model_alias, f"{self.train_dataset_harmful}_{self.train_dataset_harmless}", f"{self.kl_threshold}_{self.refusal_threshold}", f"n_train_harmful_{self.n_train_harmful}")
-    
+        if self.direction_dir:
+            return os.path.join(os.path.dirname(os.path.realpath(__file__)), "runs", self.model_alias, f"{self.train_dataset_harmful}_{self.train_dataset_harmless}_posthoc", f"{'_'.join(self.get_direction_dir())}" )
+        else:
+            return os.path.join(os.path.dirname(os.path.realpath(__file__)), "runs", self.model_alias, f"{self.train_dataset_harmful}_{self.train_dataset_harmless}", f"{self.kl_threshold}_{self.refusal_threshold}", f"n_train_harmful_{self.n_train_harmful}")
+
     def load_template(self, template_name: str):
         if template_name=="vlm_complete":
             self.n_train_harmful=800

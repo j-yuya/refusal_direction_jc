@@ -36,7 +36,10 @@ def tokenize_instructions_minicpm(
         images.append([image])
     for instruction in instructions:
         msgs_list = []
-        content_parts = ["(<image>./</image>)", instruction]
+        if pixel_values is not None:
+            content_parts = ["(<image>./</image>)", instruction]
+        else:
+            content_parts = [instruction]
         user_msg = {"role": "user", "content": "\n".join(content_parts)}
 
         # System prompt (if any)
@@ -51,9 +54,11 @@ def tokenize_instructions_minicpm(
             for msgs in msgs_list
         ]
         instructions_processed.append(prompts_str[0])
-
-    input_by_model = model.processor(instructions_processed, images, do_pad=True)
-    input_by_model.pop("image_sizes")
+    if pixel_values is not None:
+        input_by_model = model.processor(instructions_processed, images, do_pad=True)
+        input_by_model.pop("image_sizes")
+    else:
+        input_by_model = model.processor(instructions_processed, None, do_pad=True)
     return input_by_model, None
 
 def orthogonalize_minicpmv_weights(basemodel, direction: torch.Tensor):

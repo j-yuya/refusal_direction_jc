@@ -3,7 +3,7 @@ import random
 import json
 import os
 import argparse
-
+import platonic
 from dataset.load_dataset import load_dataset_split, load_dataset
 
 from pipeline.config import Config
@@ -11,7 +11,7 @@ from pipeline.model_utils.model_factory import construct_model_base
 from pipeline.utils.hook_utils import get_activation_addition_input_pre_hook, get_all_direction_ablation_hooks
 
 from pipeline.submodules.generate_directions import generate_directions
-from pipeline.submodules.select_direction import select_direction, get_refusal_scores
+from pipeline.submodules.select_direction import select_direction, get_refusal_scores, get_representations
 from pipeline.submodules.evaluate_jailbreak import evaluate_jailbreak
 from pipeline.submodules.evaluate_loss import evaluate_loss
 from pipeline.submodules.generate_activations import get_all_activations
@@ -37,29 +37,10 @@ def load_and_sample_datasets(cfg, is_vlm):
     harmless_val = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmless, split='val', instructions_only=True, is_vlm=is_vlm), cfg.n_val_harmless)
     return harmful_train, harmless_train, harmful_val, harmless_val
 
-def filter_data(cfg, model_base, harmful_train, harmless_train, harmful_val, harmless_val, is_vlm):
-    """
-    Filter datasets based on refusal scores.
+def get_representations_outer(cfg, model_base, harmful_train, harmless_train, is_vlm):
+    representations = get_representations(model_base.model, harmless_train, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, model_base=model_base)
 
-    Returns:
-        Filtered datasets: (harmful_train, harmless_train, harmful_val, harmless_val)
-    """
-    def filter_examples(dataset, scores, threshold, comparison):
-        return [inst for inst, score in zip(dataset, scores.tolist()) if comparison(score, threshold)]
-
-    if cfg.filter_train:
-        harmful_train_scores = get_refusal_scores(model_base.model, harmful_train, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, model_base=model_base)
-        harmless_train_scores = get_refusal_scores(model_base.model, harmless_train, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, model_base=model_base)
-        harmful_train = filter_examples(harmful_train, harmful_train_scores, 0, lambda x, y: x > y)
-        harmless_train = filter_examples(harmless_train, harmless_train_scores, 0, lambda x, y: x < y)
-
-    if cfg.filter_val:
-        harmful_val_scores = get_refusal_scores(model_base.model, harmful_val, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, model_base=model_base)
-        harmless_val_scores = get_refusal_scores(model_base.model, harmless_val, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, model_base=model_base)
-        harmful_val = filter_examples(harmful_val, harmful_val_scores, 0, lambda x, y: x > y)
-        harmless_val = filter_examples(harmless_val, harmless_val_scores, 0, lambda x, y: x < y)
-    
-    return harmful_train, harmless_train, harmful_val, harmless_val
+    return representations
 
 def generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train, is_vlm):
     """Generate and save candidate directions."""
@@ -154,54 +135,55 @@ def run_pipeline(model_path, cfg_template):
     harmful_train, harmless_train, harmful_val, harmless_val = load_and_sample_datasets(cfg, is_vlm)
     # Filter datasets based on refusal scores
     print("TEST")
-    harmful_train, harmless_train, harmful_val, harmless_val = filter_data(cfg, model_base, harmful_train, harmless_train, harmful_val, harmless_val, is_vlm)
     # 1. Generate candidate refusal directions
     print(f"Length of filtered training harmful: {len(harmful_train)}")
     print(f"Length of filtered training harmless {len(harmless_train)}")
-    candidate_directions = generate_and_save_candidate_directions(cfg, model_base, harmful_train, harmless_train, is_vlm)
     
     # 2. Select the most effective refusal direction
-    pos, layer, direction = select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candidate_directions, is_vlm)
 
     baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
-    ablation_fwd_pre_hooks, ablation_fwd_hooks = get_all_direction_ablation_hooks(model_base, direction)
-    actadd_fwd_pre_hooks, actadd_fwd_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(vector=direction, coeff=-1.0))], []
+    representations = get_representations_outer(cfg, model_base, harmful_train, harmless_train, is_vlm)
+    
+    if not os.path.exists(cfg.artifact_path()):
+        os.makedirs(cfg.artifact_path())
+
+    torch.save(representations, f'{cfg.artifact_path()}/representations.pt')
+    
+    #score = platonic_metric.score(representations, metric="mutual_knn", topk=10, normalize=True)
 
     # 3a. Generate and save completions on harmful evaluation datasets
-    harmful_test = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmful, split='test', is_vlm=is_vlm), cfg.n_test_harmful)
+    # harmful_test = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmful, split='test', is_vlm=is_vlm), cfg.n_test_harmful)
 
-    for dataset_name in cfg.evaluation_datasets:
-        generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name, harmful_test, is_vlm=is_vlm)
-        generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', dataset_name, harmful_test, is_vlm=is_vlm)
-        generate_and_save_completions_for_dataset(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd', dataset_name, harmful_test, is_vlm=is_vlm)
+    # for dataset_name in cfg.evaluation_datasets:
+    #     generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name, harmful_test, is_vlm=is_vlm)
 
-    # 3b. Evaluate completions and save results on harmful evaluation datasets
-    for dataset_name in cfg.evaluation_datasets:
-        evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-        evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-        evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
+    # # 3b. Evaluate completions and save results on harmful evaluation datasets
+    # for dataset_name in cfg.evaluation_datasets:
+    #     evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
+    #     evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
+    #     evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
     
-    # 4a. Generate and save completions on harmless evaluation dataset
-    harmless_test = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmless, split='test',  is_vlm=is_vlm), cfg.n_test_harmless)
+    # # 4a. Generate and save completions on harmless evaluation dataset
+    # harmless_test = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmless, split='test',  is_vlm=is_vlm), cfg.n_test_harmless)
 
-    generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmless', dataset=harmless_test, is_vlm=is_vlm)
+    # generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmless', dataset=harmless_test, is_vlm=is_vlm)
     
-    actadd_refusal_pre_hooks, actadd_refusal_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(vector=direction, coeff=+1.0))], []
-    generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, 'actadd', 'harmless', dataset=harmless_test, is_vlm=is_vlm)
+    # actadd_refusal_pre_hooks, actadd_refusal_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(vector=direction, coeff=+1.0))], []
+    # generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, 'actadd', 'harmless', dataset=harmless_test, is_vlm=is_vlm)
 
-    if not os.path.exists(os.path.join(cfg.artifact_path(), 'all_activations')):
-        os.makedirs(os.path.join(cfg.artifact_path(), 'all_activations'))
-    #TODO: applying on training data induces bias
-    all_activations_harmful = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmful_train, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)), model_base=model_base)
-    torch.save(all_activations_harmful, os.path.join(cfg.artifact_path(), 'all_activations/all_activations_harmful.pt'))
+    # if not os.path.exists(os.path.join(cfg.artifact_path(), 'all_activations')):
+    #     os.makedirs(os.path.join(cfg.artifact_path(), 'all_activations'))
+    # #TODO: applying on training data induces bias
+    # all_activations_harmful = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmful_train, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)), model_base=model_base)
+    # torch.save(all_activations_harmful, os.path.join(cfg.artifact_path(), 'all_activations/all_activations_harmful.pt'))
 
-    all_activations_harmless = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmless_train, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)), model_base=model_base)
-    torch.save(all_activations_harmless, os.path.join(cfg.artifact_path(), 'all_activations/all_activations_harmless.pt'))
+    # all_activations_harmless = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmless_train, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)), model_base=model_base)
+    # torch.save(all_activations_harmless, os.path.join(cfg.artifact_path(), 'all_activations/all_activations_harmless.pt'))
 
 
-    # 4b. Evaluate completions and save results on harmless evaluation dataset
-    evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
-    evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
+    # # 4b. Evaluate completions and save results on harmless evaluation dataset
+    # evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
+    # evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
 
     # 5. Evaluate loss on harmless datasets
     # evaluate_loss_for_datasets(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline')

@@ -463,3 +463,90 @@ def kl_div_fn(
         return torch.mean(kl_divs, dim=-1)
     else:
         return masked_mean(kl_divs, mask).mean(dim=-1)
+    
+
+def get_representations(
+    model, dataset, tokenize_instructions_fn, refusal_toks, is_vlm,
+    fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, model_base=None
+):
+    
+    instructions = [d["instruction"] for d in dataset]
+    if is_vlm and type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='CogVLMForCausalLM' and type(model).__name__ !='MiniCPMV':
+        pixel_dtype = next(model.parameters()).dtype
+        image_transform = model.vision_backbone.image_transform
+        pixel_values = [image_transform(d["pixel_values"]).to(dtype=pixel_dtype) for d in dataset]
+        pixel_values = torch.stack(pixel_values)
+    elif type(model).__name__ =='InternVLChatModel' or type(model).__name__ =='MiniCPMV':
+        pixel_values =  [(d["pixel_values"]) for d in dataset]
+    elif type(model).__name__ =='CogVLMForCausalLM':
+        pixel_values =  [(d["pixel_values"]) for d in dataset]
+        pixel_values =  [transform_image(pixels).to(dtype=torch.bfloat16) for pixels in pixel_values]
+    
+    feat_list = None
+    
+    # Transform the image using the model's vision backbone transformation
+    for i in range(0, len(instructions), batch_size):
+        batched_pixel_values = []
+        if is_vlm:
+            batched_pixel_values = pixel_values[i:i+batch_size]
+        if type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='MiniCPMV' and type(model).__name__ !='CogVLMForCausalLM':
+            inputs = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
+        elif type(model).__name__ =='MiniCPMV' or type(model).__name__ =='CogVLMForCausalLM':
+            inputs, _ = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=batched_pixel_values, model=model)
+        else:
+            inputs, batched_pixel_values = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=batched_pixel_values, model=model)
+            batched_pixel_values = [pixels.to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
+            batched_pixel_values = torch.stack(batched_pixel_values)
+
+        with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+            if is_vlm and type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='MiniCPMV' and type(model).__name__ !='CogVLMForCausalLM':
+                output = model(
+                input_ids=inputs.input_ids.to(model.device),
+                attention_mask=inputs.attention_mask.to(model.device),
+                pixel_values=batched_pixel_values.to(model.device),
+                output_hidden_states=True,
+                )
+                attention_mask = inputs.attention_mask
+            elif is_vlm and type(model).__name__ =='InternVLChatModel':
+                generation_config = model_base.gen_config
+                image_flags = torch.tensor([1] * batched_pixel_values[0].shape[0], dtype=torch.long).to(model.device)
+                output=model(
+                    pixel_values=batched_pixel_values.squeeze(0).to(model.device),
+                    input_ids=inputs.input_ids.to(model.device),
+                    attention_mask=inputs.attention_mask.to(model.device),
+                    image_flags=image_flags,
+                    output_hidden_states=True,
+                )
+                attention_mask = inputs.attention_mask
+            elif is_vlm and type(model).__name__ =='MiniCPMV':
+                position_ids = (inputs["attention_mask"].cumsum(dim=1) - 1).clamp(min=0)
+                inputs["position_ids"] = position_ids
+                output=model(inputs.to(model.device), output_hidden_states=True,)
+                attention_mask = inputs["attention_mask"]
+            elif is_vlm and type(model).__name__ =='CogVLMForCausalLM':
+                images = []
+                for image in batched_pixel_values:
+                    images.append([image.to(torch.bfloat16).to(device=model.device)])
+                output=model(
+                    input_ids=inputs['input_ids'].to(model.device),
+                    images=images,  # ✅ corrected
+                    attention_mask=inputs['attention_mask'].to(model.device),
+                    token_type_ids=inputs['token_type_ids'].to(model.device),
+                    output_hidden_states=True,
+                )
+                attention_mask=inputs["attention_mask"]
+            else:
+                output=model(
+                    input_ids=inputs.input_ids.to(model.device),
+                )
+                attention_mask = inputs["attention_mask"]
+            mask = attention_mask.unsqueeze(-1).unsqueeze(1).detach().cpu()
+            output =  tuple(t.detach().cpu() for t in output["hidden_states"])
+            feats = torch.stack(output).permute(1, 0, 2, 3)
+            print(feats)
+            feats = (feats* mask).sum(2) / mask.sum(2)
+            if feat_list is None:
+                feat_list = feats
+            else:
+                feat_list = torch.cat([feat_list, feats], dim=0) 
+    return feat_list
