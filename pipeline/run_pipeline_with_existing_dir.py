@@ -176,10 +176,14 @@ def run_pipeline(model_path, cfg_template, direction_dir):
     harmful_test = load_dataset_split(harmtype=cfg.train_dataset_harmful, split='test', is_vlm=is_vlm)
 
     for dataset_name in cfg.evaluation_datasets:
-        generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', "harmful_train", harmful_train, is_vlm=is_vlm)
-        generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', "harmful_test", harmful_test, is_vlm=is_vlm)
-        generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', "harmful_train", harmful_train, is_vlm=is_vlm)
-        generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', "harmful_test", harmful_test, is_vlm=is_vlm)
+        # generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', "harmful_train", harmful_train, is_vlm=is_vlm)
+        # generate_and_save_completions_for_dataset(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation', "harmful_test", harmful_test, is_vlm=is_vlm)
+        # generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', "harmful_train", harmful_train, is_vlm=is_vlm)
+        # generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', "harmful_test", harmful_test, is_vlm=is_vlm)
+        evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', "harmful_train", eval_methodologies=cfg.jailbreak_eval_methodologies)
+        evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', "harmful_train", eval_methodologies=cfg.jailbreak_eval_methodologies)
+        evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', "harmful_test", eval_methodologies=cfg.jailbreak_eval_methodologies)
+        evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', "harmful_test", eval_methodologies=cfg.jailbreak_eval_methodologies)
 
     
 

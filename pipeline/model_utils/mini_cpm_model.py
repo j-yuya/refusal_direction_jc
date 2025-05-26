@@ -2,11 +2,12 @@ import torch
 import functools
 from torch import Tensor
 from transformers import AutoTokenizer, AutoProcessor
-from typing import List, Optional, Tuple, Literal
+from typing import List, Optional, Tuple, Literal, Dict, Any, Union
 from jaxtyping import Int, Float
 from pipeline.model_utils.model_base import ModelBase
 from pipeline.utils.utils import get_orthogonalized_matrix
 from prismatic.models.vlms.prismatic import PrismaticVLM
+from transformers.utils import TensorType
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
 from pathlib import Path
@@ -32,8 +33,9 @@ def tokenize_instructions_minicpm(
     system_prompt=''
     images = []
     instructions_processed = []
-    for image in pixel_values:
-        images.append([image])
+    if pixel_values is not None:
+        for image in pixel_values:
+            images.append([image])
     for instruction in instructions:
         msgs_list = []
         if pixel_values is not None:
@@ -58,7 +60,23 @@ def tokenize_instructions_minicpm(
         input_by_model = model.processor(instructions_processed, images, do_pad=True)
         input_by_model.pop("image_sizes")
     else:
-        input_by_model = model.processor(instructions_processed, None, do_pad=True)
+        model_inputs = model.processor.tokenizer(instructions_processed, return_tensors=None, truncation=None, max_length=None)
+        # padded_input_ids, padding_lengths = model.processor.pad(
+        #     model_inputs["input_ids"],
+        #     padding_side="left"
+        # )
+        input_ids_tensor = torch.tensor(model_inputs["input_ids"])
+        batch_size = len(instructions)
+        # Now create the attention mask
+        attention_mask = input_ids_tensor.ne(0)
+        model_inputs["attention_mask"] = attention_mask
+        model_inputs = MiniCPMVBatchFeature(data={"input_ids": input_ids_tensor,
+                                          "attention_mask": attention_mask,
+                                          "tgt_sizes":[[] for _ in range(batch_size)],
+                                          "pixel_values": [[] for _ in range(batch_size)],
+                                          "image_bound": [[] for _ in range(batch_size)]})
+        return model_inputs, None
+    
     return input_by_model, None
 
 def orthogonalize_minicpmv_weights(basemodel, direction: torch.Tensor):
@@ -284,7 +302,7 @@ class MiniCPMV26(ModelBase):
     def _get_act_add_mod_fn(self, direction: Float[Tensor, "d_model"], coeff, layer):
         return functools.partial(act_add_minicpmv_weights, direction=direction, coeff=coeff, layer=layer)
     
-    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, max_new_tokens=64, is_vlm=False):
+    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, max_new_tokens=64, is_vlm=False, use_images = True):
         generation_config = dict(max_new_tokens=max_new_tokens, do_sample=False)
         
         completions = []
@@ -296,7 +314,10 @@ class MiniCPMV26(ModelBase):
         for i in tqdm(range(0, len(dataset), batch_size)):
             batched_pixel_values = pixel_values[i:i+batch_size]
             batched_instructions = instructions[i:i + batch_size]
-            inputs,_ = tokenize_instructions_minicpm(self.tokenizer, batched_instructions, None, True, batched_pixel_values, self.model)
+            if use_images:
+                inputs,_ = tokenize_instructions_minicpm(self.tokenizer, batched_instructions, None, True, batched_pixel_values, self.model)
+            else:
+                inputs,_ = tokenize_instructions_minicpm(self.tokenizer, batched_instructions, None, True, None, self.model)
             inputs.to(self.model.device)
             with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
                 responses = []
@@ -319,3 +340,222 @@ class MiniCPMV26(ModelBase):
                         'response': responses[j]
                     })
         return completions
+
+
+def recursive_converter(converter, value):
+    if isinstance(value, list):
+        new_value = []
+        for v in value:
+            new_value += [recursive_converter(converter, v)]
+        return new_value
+    else:
+        return converter(value)
+
+from transformers.utils import requires_backends, is_torch_dtype, is_torch_device
+from transformers.image_processing_utils import BatchFeature
+class MiniCPMVBatchFeature(BatchFeature):
+    r"""
+    Extend from BatchFeature for supporting various image size
+    """
+    def __init__(self, data: Optional[Dict[str, Any]] = None, tensor_type: Union[None, str, TensorType] = None):
+        super().__init__(data)
+        self.convert_to_tensors(tensor_type=tensor_type)
+
+    def convert_to_tensors(self, tensor_type: Optional[Union[str, TensorType]] = None):
+        if tensor_type is None:
+            return self
+        
+        is_tensor, as_tensor = self._get_is_as_tensor_fns(tensor_type)
+
+        def converter(value):
+            try:
+                if not is_tensor(value):
+                    tensor = as_tensor(value)
+                    return tensor
+            except:  # noqa E722
+                if key == "overflowing_values":
+                    raise ValueError("Unable to create tensor returning overflowing values of different lengths. ")
+                raise ValueError(
+                    "Unable to create tensor, you should probably activate padding "
+                    "with 'padding=True' to have batched tensors with the same length."
+                )
+
+
+        for key, value in self.items():
+            self[key] = recursive_converter(converter, value)
+        return self
+            
+    def to(self, *args, **kwargs) -> "MiniCPMVBatchFeature":
+        requires_backends(self, ["torch"])
+        import torch
+
+        def cast_tensor(v):
+            # check if v is a floating point
+            if torch.is_floating_point(v):
+                # cast and send to device
+                return v.to(*args, **kwargs)
+            elif device is not None:
+                return v.to(device=device)
+            else:
+                return v
+
+        new_data = {}
+        device = kwargs.get("device")
+        # Check if the args are a device or a dtype
+        if device is None and len(args) > 0:
+            # device should be always the first argument
+            arg = args[0]
+            if is_torch_dtype(arg):
+                # The first argument is a dtype
+                pass
+            elif isinstance(arg, str) or is_torch_device(arg) or isinstance(arg, int):
+                device = arg
+            else:
+                # it's something else
+                raise ValueError(f"Attempting to cast a BatchFeature to type {str(arg)}. This is not supported.")
+        # We cast only floating point tensors to avoid issues with tokenizers casting `LongTensor` to `FloatTensor`
+        for k, v in self.items():
+            new_data[k] = recursive_converter(cast_tensor, v)
+        self.data = new_data
+        return self
+    
+
+import torch
+import torch.nn.functional as F
+from typing import List, Optional, Union
+import math
+
+def preprocess_for_attack(
+    images: List[List[torch.Tensor]],
+    patch_size: int = 14,
+    scale_resolution: int = 448,
+    max_slice_nums: int = 9,
+    slice_mode: bool = True,
+    mean: List[float] = [0.5, 0.5, 0.5],
+    std: List[float] = [0.5, 0.5, 0.5],
+):
+    def normalize(tensor, mean, std):
+        mean = torch.tensor(mean, device=tensor.device).view(-1, 1, 1)
+        std = torch.tensor(std, device=tensor.device).view(-1, 1, 1)
+        return (tensor - mean) / std
+
+    def ensure_divide(length, patch_size):
+        return max(round(length / patch_size) * patch_size, patch_size)
+
+    def find_best_resize(h, w):
+        r = w / h
+        new_h = int(scale_resolution / (r**0.5))
+        new_w = int(new_h * r)
+        return ensure_divide(new_h, patch_size), ensure_divide(new_w, patch_size)
+
+    def get_sliced_grid(h, w):
+        area = h * w
+        
+        ratio = h * w / (scale_resolution ** 2)
+        multiple = min(math.ceil(ratio), max_slice_nums)
+        if multiple <= 1 or not slice_mode:
+            return None
+        best_grid = (1, 1)
+        log_ratio = (w / h).log() if isinstance(w, torch.Tensor) else math.log(w / h)
+        min_error = float("inf")
+        for i in [multiple - 1, multiple, multiple + 1]:
+            if i <= 1 or i > max_slice_nums:
+                continue
+            for rows in range(1, i + 1):
+                if i % rows == 0:
+                    cols = i // rows
+                    err = abs(log_ratio - torch.log(torch.tensor(cols / rows)))
+                    if err < min_error:
+                        best_grid = (cols, rows)
+                        min_error = err
+        return best_grid
+
+    def split_tensor_to_patches(tensor, grid):
+        C, H, W = tensor.shape
+        cols, rows = grid
+        patch_h = H // rows
+        patch_w = W // cols
+        patches = []
+        for i in range(rows):
+            for j in range(cols):
+                patch = tensor[:, i*patch_h:(i+1)*patch_h, j*patch_w:(j+1)*patch_w]
+                patches.append(patch)
+        return patches
+
+    def reshape_by_patch(image: torch.Tensor, patch_size: int = 14) -> torch.Tensor:
+        """
+        Reshape a [C, H, W] image tensor into [C, patch_size, HW // patch_size]
+        using unfold, replicating MiniCPMV logic faithfully.
+
+        Args:
+            image (torch.Tensor): Tensor of shape [3, H, W]
+            patch_size (int): Patch size for unfolding (default: 14)
+
+        Returns:
+            torch.Tensor: Tensor of shape [3, patch_size, HW // patch_size]
+        """
+        assert image.ndim == 3 and image.shape[0] == 3, "Expected image shape [3, H, W]"
+        unfolded = F.unfold(image.unsqueeze(0), kernel_size=patch_size, stride=patch_size)  # [1, C*P*P, N]
+        C = image.shape[0]
+        unfolded = unfolded.view(C, patch_size, patch_size, -1)  # [C, P, P, N]
+        reshaped = unfolded.permute(0, 1, 3, 2).reshape(C, patch_size, -1)  # [C, P, P*N] -> [C, P, N*P]
+        return reshaped
+
+    all_pixel_values = []
+    all_image_sizes = []
+    all_tgt_sizes = []
+
+    for img_list in images:
+        pixel_values = []
+        image_sizes = []
+        tgt_sizes = []
+        for img in img_list:
+            C, H, W = img.shape
+            image_sizes.append((W, H))
+            grid = get_sliced_grid(H, W)
+
+            if grid is None:
+                new_h, new_w = find_best_resize(H, W)
+                resized = F.interpolate(img.unsqueeze(0), size=(new_h, new_w), mode='bicubic', align_corners=False).squeeze(0)
+                patches = [resized]
+            else:
+                # resize to grid-compatible size
+                new_h = ensure_divide(H, grid[1])
+                new_w = ensure_divide(W, grid[0])
+                resized = F.interpolate(img.unsqueeze(0), size=(new_h, new_w), mode='bicubic', align_corners=False).squeeze(0)
+                patches = split_tensor_to_patches(resized, grid)
+
+            # ✅ Compute tgt_size once based on resized image BEFORE reshape
+            H_patches = resized.shape[1] // patch_size
+            W_patches = resized.shape[2] // patch_size
+            tgt_size = torch.tensor((H_patches, W_patches), device=resized.device)
+
+            patches = [normalize(p, mean, std) for p in patches]
+            reshaped = [reshape_by_patch(p) for p in patches]
+            tgt_sizes.extend([tgt_size] * len(reshaped))
+            pixel_values.extend(reshaped)
+
+        all_pixel_values.append(pixel_values)
+        all_image_sizes.append(image_sizes)
+        all_tgt_sizes.append(torch.stack(tgt_sizes) if tgt_sizes else torch.empty(0))
+
+    return {
+        "pixel_values": all_pixel_values,
+        "image_sizes": all_image_sizes,
+        "tgt_sizes": all_tgt_sizes,
+    }
+
+def remove_projection(x: torch.Tensor,          # (..., d_model)
+                      direction: torch.Tensor   # (d_model,)
+                      ) -> torch.Tensor:
+    """
+    Removes the component of `x` that lies along `direction`.
+    Works for tensors with arbitrary leading dimensions.
+    """
+    # d = direction / (direction.norm() + 1e-8)
+    d = d.to(dtype=x.dtype, device=x.device)
+
+    # inner-product along the last dim → shape: (...)
+    coeff = torch.einsum("...d,d->...", x, d)
+    # keepdim so broadcast works when we subtract
+    return x - coeff.unsqueeze(-1) * d

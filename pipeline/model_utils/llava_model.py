@@ -11,6 +11,9 @@ from prismatic.models.vlms.prismatic import PrismaticVLM
 #from prismatic.models.backbones.vision import VisionBackbone
 from prismatic import load
 from pathlib import Path
+from transformers import GenerationConfig
+from tqdm import tqdm
+from pipeline.utils.hook_utils import add_hooks
 
 # Vicuna prompt format (Alpaca-style)
 LLAVA_CHAT_TEMPLATE = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {instruction} ASSISTANT:"
@@ -174,3 +177,38 @@ class LlavaModel(ModelBase):
 
     def _get_act_add_mod_fn(self, direction: Float[Tensor, "d_model"], coeff, layer):
         return functools.partial(act_add_llava_weights, direction=direction, coeff=coeff, layer=layer)
+    
+    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=8, max_new_tokens=64, is_vlm=False, use_images=True):
+        generation_config = GenerationConfig(max_new_tokens=max_new_tokens, do_sample=False)
+        generation_config.pad_token_id = self.tokenizer.pad_token_id
+
+        completions = []
+        instructions = [x['instruction'] for x in dataset]
+        categories = [x['category'] for x in dataset]
+        pixel_values = [d["pixel_values"] for d in dataset]
+
+        for i in tqdm(range(0, len(dataset), batch_size)):
+            batched_pixel_values = pixel_values[i:i+batch_size]
+            batched_instructions = instructions[i:i + batch_size]
+
+            
+            with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
+                responses = []
+                for j in range(0, len(batched_pixel_values)):
+                    prompt_text = self.get_instruction_with_sys_prompt(batched_instructions[j])
+                    if use_images:
+                        response= self.model.generate(image=batched_pixel_values[j], prompt_text=prompt_text, generation_config=generation_config)
+                    else:
+                        assert use_images, "Prismatic models cannot generate w/o image"
+                        response= self.model.llm_backbone.generate(prompt_text=prompt_text, generation_config=generation_config)
+                    responses.append(response)
+                    print(response)
+                    # pdb.set_trace()
+                for j in range(0, len(batched_pixel_values)):
+                    completions.append({
+                        'category': categories[i + j],
+                        'prompt': instructions[i + j],
+                        'response': responses[j]
+                    })
+
+        return completions

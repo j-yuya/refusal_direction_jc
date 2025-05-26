@@ -21,24 +21,24 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Parse model path argument.")
     parser.add_argument('--model_path', type=str, required=True, help='Path to the model')
     parser.add_argument('--cfg_template', type=str, required=False, default=None)
+    parser.add_argument('--disable_images', action='store_false', dest='use_images')
+    parser.add_argument('--image_type', type=str, required=False, default=None)
     return parser.parse_args()
 
-def load_and_sample_datasets(cfg, is_vlm):
+def load_and_sample_datasets(cfg, is_vlm, image_type):
     """
     Load datasets and sample them based on the configuration.
 
     Returns:
         Tuple of datasets: (harmful_train, harmless_train, harmful_val, harmless_val)
     """
-    random.seed(42)
-    harmful_train = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmful, split='train', instructions_only=True, is_vlm=is_vlm), cfg.n_train_harmful)
-    harmless_train = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmless, split='train', instructions_only=True, is_vlm=is_vlm), cfg.n_train_harmless)
-    harmful_val = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmful, split='val', instructions_only=True, is_vlm=is_vlm), cfg.n_val_harmful)
-    harmless_val = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmless, split='val', instructions_only=True, is_vlm=is_vlm), cfg.n_val_harmless)
-    return harmful_train, harmless_train, harmful_val, harmless_val
 
-def get_representations_outer(cfg, model_base, harmful_train, harmless_train, is_vlm):
-    representations = get_representations(model_base.model, harmless_train, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm, model_base=model_base)
+    harmless_train = load_dataset_split(harmtype=cfg.train_dataset_harmless, split='train', instructions_only=True, is_vlm=is_vlm, image_type=image_type, full_data=True)
+
+    return harmless_train
+
+def get_representations_outer(cfg, model_base, harmless_train, is_vlm, use_images):
+    representations = get_representations(model_base.model, harmless_train, model_base.tokenize_instructions_fn, model_base.refusal_toks, is_vlm=is_vlm, model_base=model_base, use_images=use_images)
 
     return representations
 
@@ -81,7 +81,7 @@ def select_and_save_direction(cfg, model_base, harmful_val, harmless_val, candid
 
     return pos, layer, direction
 
-def generate_and_save_completions_for_dataset(cfg, model_base, fwd_pre_hooks, fwd_hooks, intervention_label, dataset_name, dataset=None, is_vlm=False):
+def generate_and_save_completions_for_dataset(cfg, model_base, fwd_pre_hooks, fwd_hooks, intervention_label, dataset_name, dataset=None, is_vlm=False, use_images=True):
     """Generate and save completions for a dataset."""
     if not os.path.exists(os.path.join(cfg.artifact_path(), 'completions')):
         os.makedirs(os.path.join(cfg.artifact_path(), 'completions'))
@@ -89,10 +89,11 @@ def generate_and_save_completions_for_dataset(cfg, model_base, fwd_pre_hooks, fw
     if dataset is None:
         dataset = load_dataset(dataset_name)
 
-    completions = model_base.generate_completions(dataset, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, max_new_tokens=cfg.max_new_tokens, is_vlm=is_vlm)
-    
-    with open(f'{cfg.artifact_path()}/completions/{dataset_name}_{intervention_label}_completions.json', "w") as f:
-        json.dump(completions, f, indent=4)
+    completions = model_base.generate_completions(dataset, fwd_pre_hooks=fwd_pre_hooks, fwd_hooks=fwd_hooks, max_new_tokens=cfg.max_new_tokens, is_vlm=is_vlm, use_images=use_images)
+    for completion in completions:
+        print(completion["response"])
+    # with open(f'{cfg.artifact_path()}/completions/{dataset_name}_{intervention_label}_completions.json', "w") as f:
+    #     json.dump(completions, f, indent=4)
 
 def evaluate_completions_and_save_results_for_dataset(cfg, intervention_label, dataset_name, eval_methodologies):
     """Evaluate completions and save results for a dataset."""
@@ -120,7 +121,9 @@ def evaluate_loss_for_datasets(cfg, model_base, fwd_pre_hooks, fwd_hooks, interv
     with open(f'{cfg.artifact_path()}/loss_evals/{intervention_label}_loss_eval.json', "w") as f:
         json.dump(loss_evals, f, indent=4)
 
-def run_pipeline(model_path, cfg_template):
+def run_pipeline(model_path, cfg_template, use_images, image_type):
+    print("USE IMAGES:")
+    print(use_images)
     """Run the full pipeline."""
     model_alias = os.path.basename(model_path)
     cfg = Config(model_alias=model_alias, model_path=model_path)
@@ -132,65 +135,23 @@ def run_pipeline(model_path, cfg_template):
     model_base = construct_model_base(cfg.model_path)
     is_vlm = cfg.is_vlm
     # Load and sample datasets
-    harmful_train, harmless_train, harmful_val, harmless_val = load_and_sample_datasets(cfg, is_vlm)
-    # Filter datasets based on refusal scores
-    print("TEST")
-    # 1. Generate candidate refusal directions
-    print(f"Length of filtered training harmful: {len(harmful_train)}")
-    print(f"Length of filtered training harmless {len(harmless_train)}")
-    
-    # 2. Select the most effective refusal direction
+    harmless_train = load_and_sample_datasets(cfg, is_vlm, image_type)
 
-    baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
-    representations = get_representations_outer(cfg, model_base, harmful_train, harmless_train, is_vlm)
+    representations = get_representations_outer(cfg, model_base, harmless_train, is_vlm, use_images)
     
     if not os.path.exists(cfg.artifact_path()):
         os.makedirs(cfg.artifact_path())
-
-    torch.save(representations, f'{cfg.artifact_path()}/representations.pt')
+    if use_images:
+        if image_type is None:
+            image_type = ""
+        torch.save(representations, f'{cfg.artifact_path()}/representations_w_images_{image_type}.pt')
+    else:
+        torch.save(representations, f'{cfg.artifact_path()}/representations_text_only.pt')
     
-    #score = platonic_metric.score(representations, metric="mutual_knn", topk=10, normalize=True)
-
-    # 3a. Generate and save completions on harmful evaluation datasets
-    # harmful_test = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmful, split='test', is_vlm=is_vlm), cfg.n_test_harmful)
-
-    # for dataset_name in cfg.evaluation_datasets:
-    #     generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', dataset_name, harmful_test, is_vlm=is_vlm)
-
-    # # 3b. Evaluate completions and save results on harmful evaluation datasets
-    # for dataset_name in cfg.evaluation_datasets:
-    #     evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-    #     evaluate_completions_and_save_results_for_dataset(cfg, 'ablation', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-    #     evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
-    
-    # # 4a. Generate and save completions on harmless evaluation dataset
-    # harmless_test = random.sample(load_dataset_split(harmtype=cfg.train_dataset_harmless, split='test',  is_vlm=is_vlm), cfg.n_test_harmless)
-
-    # generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'harmless', dataset=harmless_test, is_vlm=is_vlm)
-    
-    # actadd_refusal_pre_hooks, actadd_refusal_hooks = [(model_base.model_block_modules[layer], get_activation_addition_input_pre_hook(vector=direction, coeff=+1.0))], []
-    # generate_and_save_completions_for_dataset(cfg, model_base, actadd_refusal_pre_hooks, actadd_refusal_hooks, 'actadd', 'harmless', dataset=harmless_test, is_vlm=is_vlm)
-
-    # if not os.path.exists(os.path.join(cfg.artifact_path(), 'all_activations')):
-    #     os.makedirs(os.path.join(cfg.artifact_path(), 'all_activations'))
-    # #TODO: applying on training data induces bias
-    # all_activations_harmful = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmful_train, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)), model_base=model_base)
-    # torch.save(all_activations_harmful, os.path.join(cfg.artifact_path(), 'all_activations/all_activations_harmful.pt'))
-
-    # all_activations_harmless = get_all_activations(model=model_base.model, tokenizer=model_base.tokenizer, dataset=harmless_train, tokenize_instructions_fn=model_base.tokenize_instructions_fn, is_vlm=is_vlm, block_modules=model_base.model_block_modules, positions=list(range(-len(model_base.eoi_toks), 0)), model_base=model_base)
-    # torch.save(all_activations_harmless, os.path.join(cfg.artifact_path(), 'all_activations/all_activations_harmless.pt'))
-
-
-    # # 4b. Evaluate completions and save results on harmless evaluation dataset
-    # evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
-    # evaluate_completions_and_save_results_for_dataset(cfg, 'actadd', 'harmless', eval_methodologies=cfg.refusal_eval_methodologies)
-
-    # 5. Evaluate loss on harmless datasets
-    # evaluate_loss_for_datasets(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline')
-    # evaluate_loss_for_datasets(cfg, model_base, ablation_fwd_pre_hooks, ablation_fwd_hooks, 'ablation')
-    # evaluate_loss_for_datasets(cfg, model_base, actadd_fwd_pre_hooks, actadd_fwd_hooks, 'actadd')
+    # baseline_fwd_pre_hooks, baseline_fwd_hooks = [], []
+    # generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', "harmless_train", harmless_train, is_vlm=is_vlm, use_images=use_images)
 
 if __name__ == "__main__":
     args = parse_arguments()
-    run_pipeline(model_path=args.model_path, cfg_template=args.cfg_template)
+    run_pipeline(model_path=args.model_path, cfg_template=args.cfg_template, use_images=args.use_images, image_type=args.image_type)
 

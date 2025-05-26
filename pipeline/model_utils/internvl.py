@@ -94,22 +94,31 @@ def tokenize_instructions_and_format_pixels_intern(
     pixel_values=None,
     model=None,
 ):
-    
-    pixel_values_formatted = [load_image_from_image(d) for d in pixel_values]
+    if pixel_values is not None:
+        pixel_values_formatted = [load_image_from_image(d) for d in pixel_values]
     for i in range(len(instructions)):
-        prompt = f"<image>\n{instructions[i]}"
+        if pixel_values:
+            prompt = f"<image>\n{instructions[i]}"
+        else:
+            prompt = instructions[i]
         query = format_instruction_internvl(prompt)
-        num_patches_list = [pixel_values_formatted[i].shape[0]]
-        num_image_token = 256  # This is crucial!
-        IMG_CONTEXT_TOKEN = '<IMG_CONTEXT>'
-        img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
-        model.img_context_token_id = img_context_token_id
-        eos_token_id = tokenizer.convert_tokens_to_ids('<|im_end|>')
-        IMG_START_TOKEN = '<img>'
-        IMG_END_TOKEN = '</img>'
-        for num_patches in num_patches_list:
-            image_tokens = IMG_START_TOKEN + (IMG_CONTEXT_TOKEN * num_image_token * num_patches) + IMG_END_TOKEN
-            query = query.replace('<image>', image_tokens, 1)
+        if pixel_values is not None:
+            num_patches_list = [pixel_values_formatted[i].shape[0]]
+            num_image_token = 256  # This is crucial!
+            IMG_CONTEXT_TOKEN = '<IMG_CONTEXT>'
+            img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
+            model.img_context_token_id = img_context_token_id
+            eos_token_id = tokenizer.convert_tokens_to_ids('<|im_end|>')
+            IMG_START_TOKEN = '<img>'
+            IMG_END_TOKEN = '</img>'
+            for num_patches in num_patches_list:
+                image_tokens = IMG_START_TOKEN + (IMG_CONTEXT_TOKEN * num_image_token * num_patches) + IMG_END_TOKEN
+                query = query.replace('<image>', image_tokens, 1)
+        else:
+            IMG_CONTEXT_TOKEN = '<IMG_CONTEXT>'
+            img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
+            model.img_context_token_id = img_context_token_id
+            pixel_values_formatted = None
         instructions[i] = query
     model_inputs = tokenizer(instructions, padding=True, truncation=False, return_tensors='pt')
     return model_inputs, pixel_values_formatted
@@ -285,7 +294,7 @@ class InternVLModel(ModelBase):
     def get_instruction_with_sys_prompt(self, instruction: str):
         return ""
 
-    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, max_new_tokens=64, is_vlm=False):
+    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, max_new_tokens=64, is_vlm=False, use_images=True):
         generation_config = dict(max_new_tokens=max_new_tokens, do_sample=False)
         generation_config["pad_token_id"] = self.tokenizer.pad_token_id
         
@@ -299,24 +308,29 @@ class InternVLModel(ModelBase):
         for i in tqdm(range(0, len(dataset), batch_size)):
             batched_pixel_values = pixel_values[i:i+batch_size]
             batched_instructions = instructions[i:i + batch_size]
-            inputs, batched_pixel_values = tokenize_instructions_and_format_pixels_intern(self.tokenizer, batched_instructions, None, True, batched_pixel_values, self.model)
-            batched_pixel_values = [pixels.to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
-            batched_pixel_values = torch.stack(batched_pixel_values)
+            if use_images:
+                inputs, batched_pixel_values = tokenize_instructions_and_format_pixels_intern(self.tokenizer, batched_instructions, None, True, batched_pixel_values, self.model)
+                batched_pixel_values = [pixels.to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
+                batched_pixel_values = torch.stack(batched_pixel_values)
+            else:
+                inputs, batched_pixel_values = tokenize_instructions_and_format_pixels_intern(self.tokenizer, batched_instructions, None, True, None, self.model) 
             with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
                 responses = []
-                for j in range(0, len(batched_pixel_values)):
-                    
+                for j in range(0, len(batched_instructions)):
+                    if use_images:
+                        batched_pixel_values = batched_pixel_values.squeeze(0).to(self.model.device)
                     response_toks = self.model.generate(
-                        pixel_values=batched_pixel_values.squeeze(0).to(self.model.device),
+                        pixel_values=batched_pixel_values,
                         input_ids=inputs.input_ids.to(self.model.device),
                         attention_mask=inputs.attention_mask.to(self.model.device),
                         **generation_config
                     )
                     response = self.tokenizer.batch_decode(response_toks, skip_special_tokens=True)[0]
                     response = response.split('<|im_end|>')[0].strip()
+                    print(response)
                     responses.append(response)
                     # pdb.set_trace()
-                for j in range(0, len(batched_pixel_values)):
+                for j in range(0, len(batched_instructions)):
                     completions.append({
                         'category': categories[i + j],
                         'prompt': instructions[i + j],

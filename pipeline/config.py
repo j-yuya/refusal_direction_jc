@@ -28,6 +28,8 @@ class Config:
     kl_threshold: float = 0.1
     refusal_threshold: float = 0
     direction_dir: str = None
+    use_images: bool = True
+    image_type: str = None
 
     def get_direction_dir(self):
         return self.direction_dir.split(os.sep)[-3:]
@@ -92,6 +94,22 @@ class Config:
         elif template_name=="gen_adv_answers":
             self.train_dataset_harmful="harmful_advbench_vlm"
             self.train_dataset_harmless="harmless_vlm"
+            self.evaluation_datasets = ("harmful_complete",)
+            self.is_vlm=True
+        elif template_name=="gen_fig_answers":
+            self.train_dataset_harmful="harmful_figstep"
+            self.train_dataset_harmless="harmless_vlm"
+            self.evaluation_datasets = ("harmful_complete",)
+            self.jailbreak_eval_methodologies: Tuple[str] = ("strong_reject","llamaguard2")
+            self.is_vlm=True
+        elif template_name=="get_representations":
+            self.train_dataset_harmful="harmful_advbench_vlm"
+            self.train_dataset_harmless="wit_1024"
+            self.evaluation_datasets = ("harmful_complete",)
+            self.is_vlm=True
+        elif template_name=="get_representations2":
+            self.train_dataset_harmful="harmful_advbench_vlm"
+            self.train_dataset_harmless="harmless"
             self.evaluation_datasets = ("harmful_complete",)
             self.is_vlm=True
         else:

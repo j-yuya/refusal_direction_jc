@@ -35,6 +35,7 @@ def tokenize_instructions_cogvlm2(
         template_version='chat',
         answers=outputs,
         model=model,
+        pixel_values=pixel_values,
     )
 
     return input_by_model, None
@@ -90,13 +91,17 @@ def build_conversation_input_ids(
     history: Optional[List[Tuple[str, str]]] = None,
     template_version: Optional[Literal["base", "chat", "vqa"]] = None,
     model=None,
+    pixel_values=None,
 ):
     tokenizer.pad_token_id = 128002
     image_size: int = model.config.vision_config['image_size']
     patch_size: int = model.config.vision_config['patch_size']
     template_version = template_version or model.config.template_version
     # Token counts for vision tokens (from model arch spec)
-    vision_token_num = (image_size // patch_size // 2) * (image_size // patch_size // 2) + 2
+    if pixel_values is None:
+        vision_token_num = 0
+    else:
+        vision_token_num = (image_size // patch_size // 2) * (image_size // patch_size // 2) + 2
 
     history = history or []
 
@@ -274,7 +279,7 @@ class CogVLM2(ModelBase):
     def _get_act_add_mod_fn(self, direction: Float[Tensor, "d_model"], coeff, layer):
         return functools.partial(act_add_cogvlm_weights, direction=direction, coeff=coeff, layer=layer)
     
-    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, max_new_tokens=64, is_vlm=False):
+    def generate_completions(self, dataset, fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, max_new_tokens=64, is_vlm=False, use_images=True):
         generation_config = dict(max_new_tokens=max_new_tokens, do_sample=False)
         
         completions = []
@@ -286,16 +291,22 @@ class CogVLM2(ModelBase):
         for i in tqdm(range(0, len(dataset), batch_size)):
             batched_pixel_values = pixel_values[i:i+batch_size]
             batched_instructions = instructions[i:i + batch_size]
-            inputs, _ = tokenize_instructions_cogvlm2(self.tokenizer, batched_instructions, None, True, model=self.model)
-        
+            if use_images:
+                inputs, _ = tokenize_instructions_cogvlm2(self.tokenizer, batched_instructions, None, True, pixel_values=batched_pixel_values, model=self.model)
+            else:
+                inputs, _ = tokenize_instructions_cogvlm2(self.tokenizer, batched_instructions, None, True, pixel_values=None, model=self.model)
+
             batched_pixel_values = [transform_image(pixels).to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
             batched_pixel_values = torch.stack(batched_pixel_values)
             with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
                 responses = []
                 for j in range(0, len(batched_pixel_values)):
-                    
+                    if use_images:
+                        images = [[batched_pixel_values.squeeze(0).to(self.model.device)]]
+                    else:
+                        images = []
                     response_toks = self.model.generate(
-                        images=[[batched_pixel_values.squeeze(0).to(self.model.device)]],
+                        images=images,
                         input_ids=inputs["input_ids"].to(self.model.device),
                         attention_mask=inputs["attention_mask"].to(self.model.device),
                         token_type_ids=inputs["token_type_ids"].to(self.model.device),

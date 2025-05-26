@@ -12,15 +12,15 @@ import numpy as np
 dataset_dir_path = os.path.dirname(os.path.realpath(__file__))
 
 SPLITS = ['train', 'val', 'test']
-HARMTYPES = ['harmless', 'harmless_vlm', 'harmful', 'harmless_mmbench', "harmful_mmsafetybench", "harmful_mmsafetybench_typo", "harmful_complete", "harmful_msts", "harmful_hades", "harmful_figstep", "harmful_advbench_vlm"]
+HARMTYPES = ['wit_1024', 'harmless', 'harmless_vlm', 'harmful', 'harmless_mmbench', "harmful_mmsafetybench", "harmful_mmsafetybench_typo", "harmful_complete", "harmful_msts", "harmful_hades", "harmful_figstep", "harmful_advbench_vlm"]
 USE_TYPO = False
 USE_MSTS = False
 COMPLETE = True
 SPLIT_DATASET_FILENAME = os.path.join(dataset_dir_path, 'splits/{harmtype}_{split}.json')
 
-PROCESSED_DATASET_NAMES = ["advbench", "tdc2023", "maliciousinstruct", "harmbench_val", "harmbench_test", "jailbreakbench", "strongreject", "alpaca", "hades", "figstep"]
+PROCESSED_DATASET_NAMES = ["wit_1024", "advbench", "tdc2023", "maliciousinstruct", "harmbench_val", "harmbench_test", "jailbreakbench", "strongreject", "alpaca", "hades", "figstep"]
 
-def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False, is_vlm: bool=False):
+def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False, is_vlm: bool=False, image_type=None, full_data=False):
     assert harmtype in HARMTYPES
     assert split in SPLITS
     if is_vlm:
@@ -65,7 +65,7 @@ def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False,
                         dataset.append(dataset_entry)
                 return dataset
             elif harmtype=="harmful_figstep":
-                assert split=="test", "FigStep only has test_split"
+                #assert split=="test", "FigStep only has test_split"
                 figstep_images_path = "/ceph/jcaspary/FigStep/data/images/SafeBench"
                 figstep_csv_path = "/ceph/jcaspary/FigStep/data/question/safebench.csv"
                 dataset =[]
@@ -134,15 +134,50 @@ def load_dataset_split(harmtype: str, split: str, instructions_only: bool=False,
             file_path = SPLIT_DATASET_FILENAME.format(harmtype=harmtype, split=split)
             with open(file_path, 'r') as f:
                 dataset = json.load(f)
-            dataset = random.sample(dataset, 200)
+            if not full_data:
+                dataset = random.sample(dataset, 200)
             #pixel_values = []
             #for d in dataset:
             #    pixel_values.append(Image.open(image_path).convert("RGB"))
-            for i in range(0, len(dataset)):
+
+            if image_type == "random":
                 random_data = np.random.randint(0, 256, (size, size, 3), dtype=np.uint8)
                 image = Image.fromarray(random_data, 'RGB')
-                # dataset[i]["pixel_values"] = pixel_values[i]
-                dataset[i]["pixel_values"] = image
+            elif image_type == "trina":
+                image_path = os.path.join(dataset_dir_path, 'images/000.jpg')
+                image = Image.open(image_path).convert("RGB")
+            for i in range(0, len(dataset)):
+                if image_type is None:
+                    random_data = np.random.randint(0, 256, (size, size, 3), dtype=np.uint8)
+                    image = Image.fromarray(random_data, 'RGB')
+                    # dataset[i]["pixel_values"] = pixel_values[i]
+                    dataset[i]["pixel_values"] = image
+                elif image_type == "random" or image_type =="trina":
+                    dataset[i]["pixel_values"] = image.copy()
+            return dataset
+        elif harmtype =="wit_1024":
+            dataset = []
+            import platonic
+            platonic_metric = platonic.Alignment(dataset="minhuh/prh", subset="wit_1024")
+            data_text = platonic_metric.get_data(modality="text")
+            if image_type == "random":
+                size = 448
+                random_data = np.random.randint(0, 256, (size, size, 3), dtype=np.uint8)
+                image = Image.fromarray(random_data, 'RGB')
+            elif image_type == "trina":
+                image_path = os.path.join(dataset_dir_path, 'images/000.jpg')
+                image = Image.open(image_path).convert("RGB")
+            else:
+                data_image = platonic_metric.get_data(modality="image")
+            for i in range(0, len(data_text)):
+                dataset_entry = {}
+                dataset_entry["instruction"] = data_text[i]
+                dataset_entry["category"] = None
+                if image_type == "random" or image_type =="trina":
+                    dataset_entry["pixel_values"] = image.copy()
+                else:
+                    dataset_entry["pixel_values"] = data_image[i].convert("RGB")
+                dataset.append(dataset_entry)
             return dataset
         else:
             file_path = SPLIT_DATASET_FILENAME.format(harmtype=harmtype, split=split)

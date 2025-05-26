@@ -467,9 +467,9 @@ def kl_div_fn(
 
 def get_representations(
     model, dataset, tokenize_instructions_fn, refusal_toks, is_vlm,
-    fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, model_base=None
+    fwd_pre_hooks=[], fwd_hooks=[], batch_size=1, model_base=None, use_images=True
 ):
-    
+    used_prismatic_model_w_img = False
     instructions = [d["instruction"] for d in dataset]
     if is_vlm and type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='CogVLMForCausalLM' and type(model).__name__ !='MiniCPMV':
         pixel_dtype = next(model.parameters()).dtype
@@ -492,31 +492,55 @@ def get_representations(
         if type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='MiniCPMV' and type(model).__name__ !='CogVLMForCausalLM':
             inputs = tokenize_instructions_fn(instructions=instructions[i:i+batch_size])
         elif type(model).__name__ =='MiniCPMV' or type(model).__name__ =='CogVLMForCausalLM':
-            inputs, _ = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=batched_pixel_values, model=model)
-        else:
-            inputs, batched_pixel_values = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=batched_pixel_values, model=model)
-            batched_pixel_values = [pixels.to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
-            batched_pixel_values = torch.stack(batched_pixel_values)
+            if use_images:
+                inputs, _ = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=batched_pixel_values, model=model)
+            else:
+                inputs, _ = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=None, model=model)
+        elif type(model).__name__ =='InternVLChatModel':
+            if use_images:
+                inputs, batched_pixel_values = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=batched_pixel_values, model=model)
+                batched_pixel_values = [pixels.to(dtype=torch.bfloat16) for pixels in batched_pixel_values]
+                batched_pixel_values = torch.stack(batched_pixel_values)
+            else:
+                inputs, batched_pixel_values = tokenize_instructions_fn(instructions=instructions[i:i+batch_size], pixel_values=None, model=model)
 
         with add_hooks(module_forward_pre_hooks=fwd_pre_hooks, module_forward_hooks=fwd_hooks):
             if is_vlm and type(model).__name__ !='InternVLChatModel' and type(model).__name__ !='MiniCPMV' and type(model).__name__ !='CogVLMForCausalLM':
-                output = model(
-                input_ids=inputs.input_ids.to(model.device),
-                attention_mask=inputs.attention_mask.to(model.device),
-                pixel_values=batched_pixel_values.to(model.device),
-                output_hidden_states=True,
-                )
+                if use_images:
+                    batched_pixel_values = batched_pixel_values.to(model.device)
+                    output = model(
+                        input_ids=inputs.input_ids.to(model.device),
+                        attention_mask=inputs.attention_mask.to(model.device),
+                        pixel_values=batched_pixel_values,
+                        output_hidden_states=True,
+                    )
+                    used_prismatic_model_w_img = True
+                else:
+                    output = model.llm_backbone(
+                        input_ids=inputs.input_ids.to(model.device),
+                        attention_mask=inputs.attention_mask.to(model.device),
+                        output_hidden_states=True,
+                    )
                 attention_mask = inputs.attention_mask
             elif is_vlm and type(model).__name__ =='InternVLChatModel':
                 generation_config = model_base.gen_config
-                image_flags = torch.tensor([1] * batched_pixel_values[0].shape[0], dtype=torch.long).to(model.device)
-                output=model(
-                    pixel_values=batched_pixel_values.squeeze(0).to(model.device),
-                    input_ids=inputs.input_ids.to(model.device),
-                    attention_mask=inputs.attention_mask.to(model.device),
-                    image_flags=image_flags,
-                    output_hidden_states=True,
-                )
+                if batched_pixel_values != None:
+                    image_flags = torch.tensor([1] * batched_pixel_values[0].shape[0], dtype=torch.long).to(model.device)
+                    batched_pixel_values = batched_pixel_values.squeeze(0).to(model.device)
+                    output=model(
+                        pixel_values=batched_pixel_values,
+                        input_ids=inputs.input_ids.to(model.device),
+                        attention_mask=inputs.attention_mask.to(model.device),
+                        image_flags=image_flags,
+                        output_hidden_states=True,
+                    )
+                else:
+                    output=model.language_model(
+                        input_ids=inputs.input_ids.to(model.device),
+                        attention_mask=inputs.attention_mask.to(model.device),
+                        output_hidden_states=True,
+                    )
+                
                 attention_mask = inputs.attention_mask
             elif is_vlm and type(model).__name__ =='MiniCPMV':
                 position_ids = (inputs["attention_mask"].cumsum(dim=1) - 1).clamp(min=0)
@@ -525,8 +549,9 @@ def get_representations(
                 attention_mask = inputs["attention_mask"]
             elif is_vlm and type(model).__name__ =='CogVLMForCausalLM':
                 images = []
-                for image in batched_pixel_values:
-                    images.append([image.to(torch.bfloat16).to(device=model.device)])
+                if use_images:
+                    for image in batched_pixel_values:
+                        images.append([image.to(torch.bfloat16).to(device=model.device)])
                 output=model(
                     input_ids=inputs['input_ids'].to(model.device),
                     images=images,  # ✅ corrected
@@ -544,6 +569,8 @@ def get_representations(
             output =  tuple(t.detach().cpu() for t in output["hidden_states"])
             feats = torch.stack(output).permute(1, 0, 2, 3)
             print(feats)
+            if used_prismatic_model_w_img:
+                mask = torch.ones(feats.shape[:3] + (1,), dtype=feats.dtype, device=feats.device)
             feats = (feats* mask).sum(2) / mask.sum(2)
             if feat_list is None:
                 feat_list = feats
